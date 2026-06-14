@@ -1,0 +1,2137 @@
+import { useState, useEffect, useRef } from "react";
+
+// ══════════════════════════════════════════════════════════════
+// ALTA PRIORITÀ #1 — RICERCA INTELLIGENTE CON AUTOCOMPLETE
+// Usa ricerca fuzzy (tollerante a errori di battitura)
+// ══════════════════════════════════════════════════════════════
+
+function useFuzzySearch(items, query, keys) {
+  const [results, setResults] = useState(items);
+  useEffect(() => {
+    if (!query || query.length < 2) { setResults(items); return; }
+    const q = query.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const scored = items.map(item => {
+      let score = 0;
+      keys.forEach(key => {
+        const val = (item[key] || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        if (val === q) score += 100;
+        else if (val.startsWith(q)) score += 60;
+        else if (val.includes(q)) score += 40;
+        else {
+          // Fuzzy: controlla se tutte le lettere della query appaiono in ordine
+          let qi = 0;
+          for (let i = 0; i < val.length && qi < q.length; i++) {
+            if (val[i] === q[qi]) qi++;
+          }
+          if (qi === q.length) score += 15;
+        }
+      });
+      return { item, score };
+    });
+    setResults(scored.filter(x => x.score > 0).sort((a,b) => b.score - a.score).map(x => x.item));
+  }, [query, items.length]);
+  return results;
+}
+
+function SmartSearch({ value, onChange, jobs, scholarships, onSelectJob, onSelectScholarship }) {
+  const [focused, setFocused] = useState(false);
+  const [hovered, setHovered] = useState(-1);
+  const inputRef = useRef(null);
+
+  const allItems = [
+    ...jobs.map(j => ({ ...j, _type: "job" })),
+    ...scholarships.map(s => ({ ...s, _type: "scholarship" })),
+  ];
+  const fuzzyResults = useFuzzySearch(
+    allItems, value, ["title", "org", "city", "region", "sector"]
+  ).slice(0, 8);
+
+  const showDropdown = focused && value.length >= 2 && fuzzyResults.length > 0;
+
+  const handleKey = e => {
+    if (!showDropdown) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setHovered(h => Math.min(h + 1, fuzzyResults.length - 1)); }
+    if (e.key === "ArrowUp") { e.preventDefault(); setHovered(h => Math.max(h - 1, 0)); }
+    if (e.key === "Enter" && hovered >= 0) {
+      const item = fuzzyResults[hovered];
+      if (item._type === "job") onSelectJob(item);
+      else onSelectScholarship(item);
+      setFocused(false);
+    }
+    if (e.key === "Escape") setFocused(false);
+  };
+
+  return (
+    <div style={{ position: "relative", flex: 1 }}>
+      <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "var(--muted)", fontSize: 16, zIndex: 1 }}>🔍</span>
+      <input
+        ref={inputRef}
+        className="inp"
+        placeholder="Cerca posizione, ente, città... (es: OSS Milano, educatore Roma)"
+        value={value}
+        onChange={e => { onChange(e.target.value); setHovered(-1); }}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setTimeout(() => setFocused(false), 150)}
+        onKeyDown={handleKey}
+        style={{ paddingLeft: 40, paddingRight: value ? 36 : 16 }}
+      />
+      {value && (
+        <button onClick={() => { onChange(""); inputRef.current?.focus(); }}
+          style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: 16, lineHeight: 1 }}>✕</button>
+      )}
+      {showDropdown && (
+        <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "var(--white)", border: "1.5px solid var(--border)", borderRadius: 12, boxShadow: "0 12px 40px rgba(10,22,40,.15)", zIndex: 100, overflow: "hidden", animation: "fadeIn .15s ease" }}>
+          {fuzzyResults.map((item, i) => {
+            const c = SC[item.sector] || SC.default;
+            const isJob = item._type === "job";
+            return (
+              <div key={item.id}
+                onMouseEnter={() => setHovered(i)}
+                onClick={() => { isJob ? onSelectJob(item) : onSelectScholarship(item); setFocused(false); onChange(item.title); }}
+                style={{ padding: "11px 16px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer",
+                  background: hovered === i ? "rgba(232,184,75,.06)" : "transparent",
+                  borderBottom: i < fuzzyResults.length - 1 ? "1px solid var(--border)" : "none" }}>
+                <div style={{ width: 32, height: 32, borderRadius: 8, background: `${c}15`, border: `1px solid ${c}25`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>
+                  {isJob ? (item.sector === "Sanitario" ? "🏥" : item.sector === "Educativo" ? "📚" : item.sector === "Sociale" ? "🤝" : "💼") : (item.type === "borsa" ? "🏅" : item.type === "fellowship" ? "🚀" : "🔬")}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</div>
+                  <div style={{ fontSize: 11, color: "var(--muted)" }}>{item.org} · {item.city}</div>
+                </div>
+                <span className="tag" style={{ background: isJob ? `${c}12` : "rgba(124,58,237,.1)", color: isJob ? c : "var(--violet)", border: `1px solid ${isJob ? c : "var(--violet)"}20`, fontSize: 9, flexShrink: 0 }}>
+                  {isJob ? item.sector : item.type}
+                </span>
+              </div>
+            );
+          })}
+          <div style={{ padding: "8px 16px", fontSize: 11, color: "var(--muted)", background: "var(--cream)", textAlign: "center" }}>
+            ↑↓ per navigare · Invio per selezionare · Esc per chiudere
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// ALTA PRIORITÀ #2 — PAGINA DETTAGLIO OFFERTA CON URL UNICO
+// /jobs/:id — indicizzabile da Google come pagina standalone
+// ══════════════════════════════════════════════════════════════
+
+function JobDetailPage({ jobId, setPage, onLoginOpen }) {
+  const job = JOBS.find(j => j.id === jobId);
+  const [applied, setApplied] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => { window.scrollTo(0, 0); }, []);
+
+  if (!job) return (
+    <div style={{ paddingTop: 120, textAlign: "center", color: "var(--muted)" }}>
+      <div style={{ fontSize: 48, marginBottom: 16 }}>😕</div>
+      <div style={{ fontSize: 18, fontWeight: 700, color: "var(--ink)", marginBottom: 8 }}>Offerta non trovata</div>
+      <button className="btn btn-gold" onClick={() => setPage("jobs")} style={{ marginTop: 16 }}>← Torna alle offerte</button>
+    </div>
+  );
+
+  const c = SC[job.sector] || SC.default;
+  const days = job.deadline ? Math.ceil((new Date(job.deadline) - new Date()) / 86400000) : null;
+  const relatedJobs = JOBS.filter(j => j.id !== job.id && (j.sector === job.sector || j.region === job.region)).slice(0, 3);
+
+  return (
+    <div style={{ paddingTop: 64, minHeight: "100vh", background: "var(--cream)" }}>
+      <SchemaJobPosting job={job} />
+      <SchemaBreadcrumb items={[{ name: "Home", path: "/" }, { name: "Offerte", path: "/jobs" }, { name: job.title, path: `/jobs/${job.id}` }]} />
+
+      {/* Hero offerta */}
+      <div style={{ background: `linear-gradient(135deg, ${c}22 0%, transparent 60%), var(--ink)`, padding: "48px 40px 40px", borderBottom: `3px solid ${c}` }}>
+        <div style={{ maxWidth: 900, margin: "0 auto" }}>
+          <button onClick={() => setPage("jobs")} className="btn" style={{ background: "rgba(255,255,255,.08)", color: "rgba(255,255,255,.7)", padding: "7px 14px", fontSize: 13, marginBottom: 24, borderRadius: 8 }}>
+            ← Torna alle offerte
+          </button>
+          <div style={{ display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" }}>
+            <div style={{ width: 64, height: 64, borderRadius: 16, background: `${c}25`, border: `2px solid ${c}40`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 30, flexShrink: 0 }}>
+              {job.sector === "Sanitario" ? "🏥" : job.sector === "Educativo" ? "📚" : job.sector === "Sociale" ? "🤝" : job.sector === "Assistenza" ? "🏠" : job.sector === "Tecnico" ? "🔧" : "📢"}
+            </div>
+            <div style={{ flex: 1 }}>
+              {job.featured && <span className="tag" style={{ background: "rgba(232,184,75,.15)", color: "var(--gold)", border: "1px solid rgba(232,184,75,.3)", fontSize: 10, marginBottom: 8, display: "inline-block" }}>★ IN EVIDENZA</span>}
+              <h1 className="pf" style={{ fontSize: 34, fontWeight: 900, color: "#fff", lineHeight: 1.1, marginBottom: 6 }}>{job.title}</h1>
+              <div style={{ fontSize: 16, color: c, fontWeight: 700, marginBottom: 12 }}>{job.org}</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <span className="tag" style={{ background: `${c}20`, color: c, border: `1px solid ${c}35` }}>{job.sector}</span>
+                <span className="tag" style={{ background: "rgba(255,255,255,.08)", color: "rgba(255,255,255,.7)", border: "1px solid rgba(255,255,255,.12)" }}>{TL[job.type] || job.type}</span>
+                <span className="tag" style={{ background: "rgba(255,255,255,.08)", color: "rgba(255,255,255,.7)", border: "1px solid rgba(255,255,255,.12)" }}>{job.contract}</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
+              <button onClick={() => setSaved(s => !s)} className="btn" style={{ background: saved ? "rgba(232,184,75,.15)" : "rgba(255,255,255,.08)", color: saved ? "var(--gold)" : "rgba(255,255,255,.7)", padding: "10px 16px", fontSize: 13, border: `1px solid ${saved ? "rgba(232,184,75,.3)" : "rgba(255,255,255,.12)"}` }}>
+                {saved ? "❤ Salvata" : "🤍 Salva"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 900, margin: "0 auto", padding: "36px 40px 60px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 28, alignItems: "start" }}>
+          {/* Contenuto principale */}
+          <div>
+            {/* Info rapide */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginBottom: 28 }}>
+              {[["📍 Luogo", `${job.city}, ${job.region}`], ["💰 Stipendio", job.salary_min ? `€${job.salary_min.toLocaleString()} – €${job.salary_max?.toLocaleString()}/mese` : "Da concordare"], ["💼 Tipo contratto", job.contract], ["🏢 Organizzazione", TL[job.type] || job.type], ["📅 Scadenza", job.deadline || "Non specificata"], ["🏷 Settore", job.sector]].map(([l, v]) => (
+                <div key={l} className="card" style={{ padding: "14px 16px" }}>
+                  <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 700, letterSpacing: .5, marginBottom: 4 }}>{l}</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "var(--ink)" }}>{v}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Scadenza alert */}
+            {days !== null && days >= 0 && days < 14 && (
+              <div style={{ background: days < 7 ? "rgba(255,107,107,.07)" : "rgba(217,119,6,.07)", border: `1px solid ${days < 7 ? "rgba(255,107,107,.2)" : "rgba(217,119,6,.2)"}`, borderRadius: 10, padding: "12px 16px", marginBottom: 24, fontSize: 13, fontWeight: 700, color: days < 7 ? "var(--coral)" : "#d97706" }}>
+                {days === 0 ? "⏰ L'offerta scade OGGI — candidati subito!" : `⏳ Scade tra ${days} giorni (${job.deadline})`}
+              </div>
+            )}
+
+            {/* Descrizione */}
+            <div className="card" style={{ padding: 24, marginBottom: 20 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "var(--muted)", letterSpacing: 2, marginBottom: 14 }}>DESCRIZIONE DELLA POSIZIONE</div>
+              <p style={{ fontSize: 15, color: "var(--ink)", lineHeight: 1.85 }}>{job.desc}</p>
+            </div>
+
+            {/* Cosa offriamo */}
+            <div className="card" style={{ padding: 24, marginBottom: 20 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "var(--muted)", letterSpacing: 2, marginBottom: 14 }}>COSA OFFRIAMO</div>
+              <div style={{ display: "grid", gap: 10 }}>
+                {["Ambiente di lavoro inclusivo e collaborativo", "Formazione continua e aggiornamento professionale", "Contratto " + job.contract + " secondo CCNL di categoria", job.salary_min ? `Retribuzione lorda: €${job.salary_min.toLocaleString()}–${job.salary_max?.toLocaleString()}/mese` : "Rimborso spese secondo accordo"].map((item, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "var(--ink)" }}>
+                    <span style={{ width: 20, height: 20, borderRadius: "50%", background: "rgba(22,163,74,.1)", border: "1px solid rgba(22,163,74,.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "var(--lime)", flexShrink: 0 }}>✓</span>
+                    {item}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Offerte correlate */}
+            {relatedJobs.length > 0 && (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, color: "var(--muted)", letterSpacing: 2, marginBottom: 14 }}>OFFERTE CORRELATE</div>
+                <div style={{ display: "grid", gap: 12 }}>
+                  {relatedJobs.map(rj => {
+                    const rc = SC[rj.sector] || SC.default;
+                    return (
+                      <div key={rj.id} className="card" onClick={() => setPage("job_" + rj.id)} style={{ padding: "14px 18px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", borderLeft: `3px solid ${rc}` }}>
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: 13, color: "var(--ink)" }}>{rj.title}</div>
+                          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{rj.org} · {rj.city}</div>
+                        </div>
+                        <span style={{ fontSize: 12, color: rc, fontWeight: 700 }}>→</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Sidebar CTA */}
+          <div style={{ position: "sticky", top: 80 }}>
+            <div className="card" style={{ padding: 24, marginBottom: 16 }}>
+              <div className="pf" style={{ fontSize: 18, fontWeight: 700, color: "var(--ink)", marginBottom: 6 }}>Interessato a questa posizione?</div>
+              <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 20, lineHeight: 1.65 }}>Clicca per accedere al sito ufficiale di {job.org} e inviare la tua candidatura.</p>
+              {applied ? (
+                <div style={{ background: "rgba(22,163,74,.08)", border: "1px solid rgba(22,163,74,.2)", borderRadius: 10, padding: "14px 16px", textAlign: "center", fontSize: 14, color: "var(--lime)", fontWeight: 700 }}>✅ Hai già candidato per questa offerta</div>
+              ) : (
+                <button className="btn btn-gold" onClick={() => setApplied(true)} style={{ width: "100%", justifyContent: "center", padding: 14, fontSize: 15 }}>
+                  Vai all'offerta originale →
+                </button>
+              )}
+              <div style={{ textAlign: "center", marginTop: 8, fontSize: 11, color: "var(--muted)" }}>Reindirizzato al sito ufficiale di {job.org}</div>
+            </div>
+
+            {/* Alert email */}
+            <AlertEmailBox jobCity={job.city} jobSector={job.sector} />
+
+            {/* Condividi */}
+            <div className="card" style={{ padding: 20 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "var(--muted)", letterSpacing: 2, marginBottom: 12 }}>CONDIVIDI</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {[["WhatsApp", "#25d366", "📱"], ["LinkedIn", "#0077b5", "💼"], ["Email", "#e8b84b", "✉️"]].map(([name, col, ico]) => (
+                  <button key={name} onClick={() => {
+                    const url = `https://solco.it/jobs/${job.id}`;
+                    const txt = `${job.title} — ${job.org} (${job.city})`;
+                    if (name === "WhatsApp") window.open(`https://wa.me/?text=${encodeURIComponent(txt + "\n" + url)}`);
+                    else if (name === "LinkedIn") window.open(`https://linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(url)}`);
+                    else window.open(`mailto:?subject=${encodeURIComponent(txt)}&body=${encodeURIComponent(url)}`);
+                  }} style={{ flex: 1, padding: "9px 8px", borderRadius: 8, border: "none", background: col + "15", color: col, cursor: "pointer", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                    {ico} {name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// ALTA PRIORITÀ #3 — ALERT EMAIL — iscrizione notifiche reali
+// ══════════════════════════════════════════════════════════════
+
+function AlertEmailBox({ jobCity = "", jobSector = "" }) {
+  const [email, setEmail] = useState("");
+  const [city, setCity] = useState(jobCity);
+  const [sector, setSector] = useState(jobSector || "Tutti");
+  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = () => {
+    if (!email || !email.includes("@")) { setError("Inserisci un'email valida."); return; }
+    // In produzione: POST a /api/alerts con { email, city, sector }
+    setSubmitted(true);
+    setError("");
+  };
+
+  if (submitted) return (
+    <div className="card" style={{ padding: 20, marginBottom: 16, background: "rgba(22,163,74,.05)", border: "1px solid rgba(22,163,74,.2)" }}>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
+        <div style={{ fontWeight: 700, color: "var(--lime)", fontSize: 14, marginBottom: 4 }}>Alert attivato!</div>
+        <div style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.6 }}>Riceverai un'email ogni mattina con le nuove offerte a <strong>{city || "tutta Italia"}</strong> nel settore <strong>{sector}</strong>.</div>
+        <button onClick={() => setSubmitted(false)} style={{ marginTop: 10, background: "none", border: "none", color: "var(--gold)", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Modifica preferenze</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <span style={{ fontSize: 20 }}>🔔</span>
+        <div className="pf" style={{ fontSize: 15, fontWeight: 700, color: "var(--ink)" }}>Alert offerte simili</div>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 14, lineHeight: 1.65 }}>Ricevi ogni mattina le nuove offerte che corrispondono ai tuoi criteri.</p>
+      {error && <div style={{ fontSize: 12, color: "var(--coral)", marginBottom: 10 }}>⚠ {error}</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <input className="inp" type="email" placeholder="La tua email *" value={email} onChange={e => setEmail(e.target.value)} style={{ fontSize: 13 }} />
+        <input className="inp" placeholder="Città (opz.)" value={city} onChange={e => setCity(e.target.value)} style={{ fontSize: 13 }} />
+        <select className="inp" value={sector} onChange={e => setSector(e.target.value)} style={{ fontSize: 13 }}>
+          {["Tutti", "Sociale", "Sanitario", "Educativo", "Assistenza", "Tecnico", "Comunicazione"].map(s => <option key={s}>{s}</option>)}
+        </select>
+        <button className="btn btn-gold" onClick={submit} style={{ width: "100%", justifyContent: "center", padding: 11, fontSize: 13 }}>
+          🔔 Attiva alert gratuito
+        </button>
+      </div>
+      <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 8, lineHeight: 1.5 }}>Nessuno spam. Cancellazione con un click. GDPR compliant.</div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// ALTA PRIORITÀ #4 — GEOLOCATION FILTER "Vicino a me"
+// ══════════════════════════════════════════════════════════════
+
+function useGeolocation() {
+  const [state, setState] = useState({ loading: false, coords: null, error: null, city: "" });
+  const locate = () => {
+    if (!navigator.geolocation) { setState(s => ({ ...s, error: "Geolocalizzazione non supportata dal browser." })); return; }
+    setState(s => ({ ...s, loading: true, error: null }));
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        const { latitude, longitude } = pos.coords;
+        setState(s => ({ ...s, loading: false, coords: { latitude, longitude } }));
+      },
+      err => {
+        setState(s => ({ ...s, loading: false, error: "Permesso negato o posizione non disponibile." }));
+      },
+      { timeout: 8000, maximumAge: 300000 }
+    );
+  };
+  return { ...state, locate };
+}
+
+function distanceKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function GeoFilterBar({ onFilter, active, onClear }) {
+  const geo = useGeolocation();
+  const [radius, setRadius] = useState(50);
+
+  const handleLocate = () => {
+    geo.locate();
+  };
+
+  useEffect(() => {
+    if (geo.coords) {
+      onFilter({ coords: geo.coords, radius });
+    }
+  }, [geo.coords, radius]);
+
+  return (
+    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", padding: "12px 16px", background: active ? "rgba(8,145,178,.06)" : "rgba(10,22,40,.03)", border: `1px solid ${active ? "rgba(8,145,178,.25)" : "var(--border)"}`, borderRadius: 10, transition: "all .2s" }}>
+      <span style={{ fontSize: 18 }}>📍</span>
+      {!active ? (
+        <>
+          <span style={{ fontSize: 13, color: "var(--muted)", flex: 1 }}>Trova offerte vicino a te</span>
+          <button onClick={handleLocate} disabled={geo.loading} className="btn btn-teal" style={{ padding: "8px 16px", fontSize: 13, opacity: geo.loading ? .7 : 1 }}>
+            {geo.loading ? "⏳ Ricerca..." : "📍 Usa la mia posizione"}
+          </button>
+        </>
+      ) : (
+        <>
+          <span style={{ fontSize: 13, color: "var(--teal)", fontWeight: 600, flex: 1 }}>
+            Offerte entro {radius}km da te
+          </span>
+          <select value={radius} onChange={e => { setRadius(+e.target.value); if (geo.coords) onFilter({ coords: geo.coords, radius: +e.target.value }); }}
+            style={{ background: "var(--white)", border: "1px solid rgba(8,145,178,.3)", borderRadius: 7, padding: "6px 10px", fontSize: 12, color: "var(--teal)", fontWeight: 600, cursor: "pointer" }}>
+            {[10, 20, 30, 50, 80, 100].map(r => <option key={r} value={r}>{r}km</option>)}
+          </select>
+          <button onClick={onClear} style={{ background: "rgba(8,145,178,.1)", border: "1px solid rgba(8,145,178,.2)", borderRadius: 7, padding: "6px 12px", color: "var(--teal)", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>✕ Rimuovi</button>
+        </>
+      )}
+      {geo.error && <div style={{ width: "100%", fontSize: 11, color: "var(--coral)", marginTop: 4 }}>⚠ {geo.error}</div>}
+    </div>
+  );
+}
+
+
+// ══════════════════════════════════════════════════════════════
+// SEO ENGINE — Schema Markup + Meta Tags + Open Graph
+// Implementazione completa per Google, Bing, LinkedIn, WhatsApp
+// ══════════════════════════════════════════════════════════════
+
+// ── HOOK: inietta <script> JSON-LD nel <head> ─────────────────
+function useJsonLd(data) {
+  useEffect(() => {
+    const id = "solco-jsonld-" + (data["@type"] || "org").toLowerCase().replace(/\s/g,"-");
+    let el = document.getElementById(id);
+    if (!el) { el = document.createElement("script"); el.id = id; el.type = "application/ld+json"; document.head.appendChild(el); }
+    el.textContent = JSON.stringify(data, null, 2);
+    return () => { const e = document.getElementById(id); if(e) e.remove(); };
+  }, [JSON.stringify(data)]);
+}
+
+// ── HOOK: imposta <title> e <meta> dinamicamente ──────────────
+function useMeta({ title, description, url, type = "website", keywords = "" }) {
+  useEffect(() => {
+    // Title
+    document.title = title ? `${title} | Solco.it` : "Solco.it — Lavoro nel Terzo Settore Italiano";
+
+    const setMeta = (name, content, prop = false) => {
+      const attr = prop ? "property" : "name";
+      let el = document.querySelector(`meta[${attr}="${name}"]`);
+      if (!el) { el = document.createElement("meta"); el.setAttribute(attr, name); document.head.appendChild(el); }
+      el.setAttribute("content", content);
+    };
+
+    const desc = description || "Aggregatore intelligente di offerte di lavoro, borse di studio e tirocini nel Terzo Settore italiano. Cooperative, ONLUS, Fondazioni, ONG.";
+    const canonical = url || "https://solco.it";
+
+    // Meta standard
+    setMeta("description", desc);
+    setMeta("keywords", keywords || "lavoro terzo settore, cooperativa sociale, ONLUS, OSS, educatore, borsa studio, tirocinio, volontariato, assistente sociale");
+    setMeta("robots", "index, follow");
+    setMeta("author", "Solco.it");
+    setMeta("language", "it");
+
+    // Open Graph (Facebook, LinkedIn, WhatsApp)
+    setMeta("og:title", title || "Solco.it — Lavoro nel Terzo Settore", true);
+    setMeta("og:description", desc, true);
+    setMeta("og:url", canonical, true);
+    setMeta("og:type", type, true);
+    setMeta("og:site_name", "Solco.it", true);
+    setMeta("og:locale", "it_IT", true);
+    setMeta("og:image", "https://solco.it/og-image.png", true);
+    setMeta("og:image:width", "1200", true);
+    setMeta("og:image:height", "630", true);
+
+    // Twitter Card
+    setMeta("twitter:card", "summary_large_image");
+    setMeta("twitter:title", title || "Solco.it");
+    setMeta("twitter:description", desc);
+    setMeta("twitter:image", "https://solco.it/og-image.png");
+
+    // Canonical URL
+    let link = document.querySelector("link[rel='canonical']");
+    if (!link) { link = document.createElement("link"); link.rel = "canonical"; document.head.appendChild(link); }
+    link.href = canonical;
+  }, [title, description, url]);
+}
+
+// ── SCHEMA: Organizzazione principale ─────────────────────────
+function SchemaOrganization() {
+  useJsonLd({
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "Solco.it",
+    "url": "https://solco.it",
+    "logo": "https://solco.it/logo.svg",
+    "description": "Aggregatore italiano di offerte di lavoro, borse di studio e tirocini nel Terzo Settore.",
+    "foundingDate": "2026",
+    "areaServed": { "@type": "Country", "name": "Italy" },
+    "inLanguage": "it",
+    "contactPoint": {
+      "@type": "ContactPoint",
+      "email": "info@solco.it",
+      "contactType": "customer service",
+      "availableLanguage": "Italian"
+    },
+    "sameAs": [
+      "https://www.linkedin.com/company/solco-it",
+      "https://www.facebook.com/solco.it"
+    ]
+  });
+  return null;
+}
+
+// ── SCHEMA: Sito web con SearchAction (Google Sitelinks Search) ─
+function SchemaWebSite() {
+  useJsonLd({
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "Solco.it",
+    "url": "https://solco.it",
+    "description": "Il primo aggregatore intelligente di lavoro nel Terzo Settore italiano",
+    "inLanguage": "it",
+    "potentialAction": {
+      "@type": "SearchAction",
+      "target": {
+        "@type": "EntryPoint",
+        "urlTemplate": "https://solco.it/jobs?search={search_term_string}"
+      },
+      "query-input": "required name=search_term_string"
+    }
+  });
+  return null;
+}
+
+// ── SCHEMA: Singola offerta di lavoro ─────────────────────────
+function SchemaJobPosting({ job }) {
+  const today = new Date().toISOString().split("T")[0];
+  const validThrough = job.deadline || new Date(Date.now() + 30*24*60*60*1000).toISOString().split("T")[0];
+  useJsonLd({
+    "@context": "https://schema.org",
+    "@type": "JobPosting",
+    "title": job.title,
+    "description": job.desc || `Offerta di lavoro: ${job.title} presso ${job.org}`,
+    "datePosted": today,
+    "validThrough": validThrough,
+    "employmentType": job.contract === "Tempo Indeterminato" ? "FULL_TIME"
+      : job.contract === "Part-time" ? "PART_TIME"
+      : job.contract === "Sostituzione" ? "TEMPORARY"
+      : job.contract === "Volontariato" ? "VOLUNTEER"
+      : "CONTRACTOR",
+    "hiringOrganization": {
+      "@type": "Organization",
+      "name": job.org,
+      "sameAs": job.source_url || "https://solco.it"
+    },
+    "jobLocation": {
+      "@type": "Place",
+      "address": {
+        "@type": "PostalAddress",
+        "addressLocality": job.city,
+        "addressRegion": job.region,
+        "addressCountry": "IT"
+      }
+    },
+    "baseSalary": job.salary_min ? {
+      "@type": "MonetaryAmount",
+      "currency": "EUR",
+      "value": {
+        "@type": "QuantitativeValue",
+        "minValue": job.salary_min,
+        "maxValue": job.salary_max || job.salary_min,
+        "unitText": "MONTH"
+      }
+    } : undefined,
+    "occupationalCategory": job.sector,
+    "industry": "Terzo Settore",
+    "url": `https://solco.it/jobs/${job.id}`,
+    "applicationContact": {
+      "@type": "ContactPoint",
+      "contactType": "Human Resources",
+      "url": `https://solco.it/jobs/${job.id}`
+    }
+  });
+  return null;
+}
+
+// ── SCHEMA: Pagina lista offerte (ItemList) ────────────────────
+function SchemaJobList({ jobs }) {
+  useJsonLd({
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    "name": "Offerte di lavoro nel Terzo Settore italiano",
+    "description": "Lista aggiornata di offerte di lavoro nel Terzo Settore: cooperative sociali, ONLUS, fondazioni, ONG e privati.",
+    "url": "https://solco.it/jobs",
+    "numberOfItems": jobs.length,
+    "itemListElement": jobs.slice(0, 10).map((job, i) => ({
+      "@type": "ListItem",
+      "position": i + 1,
+      "url": `https://solco.it/jobs/${job.id}`,
+      "name": `${job.title} — ${job.org} (${job.city})`
+    }))
+  });
+  return null;
+}
+
+// ── SCHEMA: Borsa di studio / Tirocinio ───────────────────────
+function SchemaScholarship({ s }) {
+  useJsonLd({
+    "@context": "https://schema.org",
+    "@type": s.type === "tirocinio" ? "WorkBasedProgram" : "Scholarship",
+    "name": s.title,
+    "description": s.desc,
+    "provider": {
+      "@type": "Organization",
+      "name": s.org
+    },
+    "educationalLevel": s.level,
+    "applicationDeadline": s.deadline,
+    "url": `https://solco.it/scholarships/${s.id}`,
+    "awardAmount": s.amount ? {
+      "@type": "MonetaryAmount",
+      "currency": "EUR",
+      "value": s.amount
+    } : undefined,
+    "occupationalCategory": s.sector,
+    "availableAtOrFrom": {
+      "@type": "Place",
+      "address": {
+        "@type": "PostalAddress",
+        "addressLocality": s.city,
+        "addressRegion": s.region,
+        "addressCountry": "IT"
+      }
+    }
+  });
+  return null;
+}
+
+// ── SCHEMA: FAQ (aumenta CTR nei risultati Google) ────────────
+function SchemaFAQ() {
+  useJsonLd({
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      { "@type": "Question", "name": "Come trovare lavoro nel Terzo Settore in Italia?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Solco.it aggrega ogni giorno offerte di lavoro da cooperative sociali, ONLUS, fondazioni, ONG e privati in tutta Italia. Puoi filtrare per città, regione, settore e tipo di contratto." }},
+      { "@type": "Question", "name": "Quali figure professionali cerca il Terzo Settore?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Le figure più ricercate sono: OSS (Operatore Socio Sanitario), educatori professionali, assistenti sociali, psicologi, badanti, colf, coordinatori di progetto, responsabili comunicazione." }},
+      { "@type": "Question", "name": "Ci sono borse di studio per chi lavora nel sociale?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Sì. Solco.it raccoglie borse di studio, tirocini retribuiti e fellowship per studenti e giovani professionisti del Terzo Settore, con importi che vanno da €400/mese fino a €15.000 totali." }},
+      { "@type": "Question", "name": "Il sito Solco.it è gratuito?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Sì, la consultazione delle offerte, della mappa e delle borse di studio è completamente gratuita. La registrazione è gratuita e permette di caricare il CV e ricevere alert personalizzati." }},
+      { "@type": "Question", "name": "Come posso candidarmi a un'offerta?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Cliccando su un'offerta si accede ai dettagli completi e al link diretto al sito dell'organizzazione che ha pubblicato l'annuncio, dove si effettua la candidatura ufficiale." }}
+    ]
+  });
+  return null;
+}
+
+// ── SCHEMA: BreadcrumbList per navigazione ────────────────────
+function SchemaBreadcrumb({ items }) {
+  useJsonLd({
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": items.map((item, i) => ({
+      "@type": "ListItem",
+      "position": i + 1,
+      "name": item.name,
+      "item": `https://solco.it${item.path}`
+    }))
+  });
+  return null;
+}
+
+// ── COMPONENTE SEO GLOBALE (sempre presente) ──────────────────
+function GlobalSEO({ page, jobs, scholarships }) {
+  const metaMap = {
+    home:         { title: "Solco.it — Lavoro nel Terzo Settore Italiano", description: "Il primo aggregatore intelligente di offerte di lavoro, borse di studio e tirocini nel Terzo Settore italiano. Cooperative, ONLUS, ONG, fondazioni.", url: "https://solco.it", keywords: "lavoro terzo settore italia, cooperative sociali lavoro, ONLUS offerte, OSS lavoro, educatore sociale" },
+    jobs:         { title: "Offerte di Lavoro Terzo Settore", description: `${jobs.length} offerte di lavoro nel Terzo Settore italiano. Trova posizioni in cooperative sociali, ONLUS, fondazioni e ONG in tutta Italia.`, url: "https://solco.it/jobs", keywords: "offerte lavoro cooperativa sociale, lavoro ONLUS, OSS offerte lavoro, educatore professionale lavoro, assistente sociale lavoro" },
+    scholarships: { title: "Borse di Studio e Tirocini Terzo Settore", description: `${scholarships.length} borse di studio, tirocini e fellowship nel Terzo Settore italiano. Trova opportunità formative in cooperative, ONG e fondazioni.`, url: "https://solco.it/scholarships", keywords: "borsa studio servizio sociale, tirocinio ONLUS, fellowship terzo settore, stage cooperativa sociale" },
+    map:          { title: "Mappa Offerte Lavoro Italia — Terzo Settore", description: "Visualizza sulla mappa dell'Italia tutte le offerte di lavoro nel Terzo Settore. Scopri le regioni con più opportunità per operatori sociali.", url: "https://solco.it/map", keywords: "mappa lavoro sociale italia, offerte lavoro regione, cooperative sociali nord sud" },
+    privacy:      { title: "Privacy Policy e GDPR — Solco.it", description: "Informativa privacy completa conforme al GDPR UE 2016/679 e D.Lgs. 196/2003. Scopri come proteggiamo i tuoi dati personali su Solco.it.", url: "https://solco.it/privacy", keywords: "privacy policy GDPR, protezione dati personali, trattamento dati lavoro" },
+    guida:        { title: "Come Pubblicare il Sito e Partita IVA — Guida Solco", description: "Guida completa su come rendere disponibile online Solco.it e quando serve la Partita IVA per gestire un sito web in Italia.", url: "https://solco.it/guida" },
+    about:        { title: "Chi Siamo — Solco.it Terzo Settore", description: "Scopri chi ha creato Solco.it, come funziona l'aggregazione AI delle offerte e come collaborare con noi.", url: "https://solco.it/about" },
+  };
+  const meta = metaMap[page] || metaMap.home;
+  useMeta(meta);
+  return (
+    <>
+      <SchemaOrganization/>
+      <SchemaWebSite/>
+      {page==="home"&&<SchemaFAQ/>}
+      {page==="jobs"&&<SchemaJobList jobs={jobs}/>}
+      {page==="jobs"&&jobs.slice(0,3).map(j=><SchemaJobPosting key={j.id} job={j}/>)}
+      {page==="scholarships"&&scholarships.slice(0,3).map(s=><SchemaScholarship key={s.id} s={s}/>)}
+      {page==="jobs"&&<SchemaBreadcrumb items={[{name:"Home",path:"/"},{name:"Offerte di lavoro",path:"/jobs"}]}/>}
+      {page==="scholarships"&&<SchemaBreadcrumb items={[{name:"Home",path:"/"},{name:"Borse & Tirocini",path:"/scholarships"}]}/>}
+      {page==="map"&&<SchemaBreadcrumb items={[{name:"Home",path:"/"},{name:"Mappa",path:"/map"}]}/>}
+    </>
+  );
+}
+
+// ── SITEMAP XML (generata dinamicamente) ──────────────────────
+function generateSitemap(jobs, scholarships) {
+  const base = "https://solco.it";
+  const today = new Date().toISOString().split("T")[0];
+  const staticPages = [
+    { url: "/", priority: "1.0", freq: "daily" },
+    { url: "/jobs", priority: "0.9", freq: "daily" },
+    { url: "/scholarships", priority: "0.9", freq: "weekly" },
+    { url: "/map", priority: "0.8", freq: "daily" },
+    { url: "/about", priority: "0.6", freq: "monthly" },
+    { url: "/privacy", priority: "0.4", freq: "monthly" },
+    { url: "/guida", priority: "0.5", freq: "monthly" },
+  ];
+  const jobPages  = jobs.map(j => ({ url: `/jobs/${j.id}`, priority: "0.8", freq: "weekly" }));
+  const schPages  = scholarships.map(s => ({ url: `/scholarships/${s.id}`, priority: "0.8", freq: "weekly" }));
+  const allPages  = [...staticPages, ...jobPages, ...schPages];
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${allPages.map(p => `  <url>
+    <loc>${base}${p.url}</loc>
+    <lastmod>${today}</lastmod>
+    <changefreq>${p.freq}</changefreq>
+    <priority>${p.priority}</priority>
+  </url>`).join("\n")}
+</urlset>`;
+}
+
+// ── PANNELLO SEO (visibile solo in Admin) ─────────────────────
+function SEOPanel({ jobs, scholarships }) {
+  const [copied, setCopied] = useState("");
+  const sitemap = generateSitemap(jobs, scholarships);
+  const robotsTxt = `User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /profile\nSitemap: https://solco.it/sitemap.xml`;
+  const htaccess = `# Forza HTTPS\nRewriteEngine On\nRewriteCond %{HTTPS} off\nRewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]\n\n# Cache statica\nExpiresActive On\nExpiresByType image/svg+xml "access plus 1 year"\nExpiresByType text/css "access plus 1 week"`;
+
+  const copy = (text, label) => { navigator.clipboard.writeText(text); setCopied(label); setTimeout(() => setCopied(""), 2000); };
+
+  const checks = [
+    ["✅", "Schema JobPosting attivo", "Google mostra le offerte direttamente nei risultati"],
+    ["✅", "Schema Scholarship attivo", "Le borse appaiono nei risultati di ricerca arricchiti"],
+    ["✅", "Schema FAQ attivo", "Le FAQ espandibili appaiono in Google"],
+    ["✅", "Schema BreadcrumbList attivo", "Navigazione breadcrumb visibile in Google"],
+    ["✅", "Open Graph attivo", "Anteprima ricca su LinkedIn, Facebook, WhatsApp"],
+    ["✅", "Twitter Card attiva", "Anteprima ottimizzata su Twitter/X"],
+    ["✅", "SearchAction attivo", "Google può mostrare la barra di ricerca nei risultati"],
+    ["✅", "Meta description dinamica", "Ogni pagina ha descrizione unica ottimizzata"],
+    ["✅", "Canonical URL", "Evita contenuti duplicati penalizzati da Google"],
+    ["⚙️", "Sitemap.xml", "Generata — da pubblicare su /sitemap.xml"],
+    ["⚙️", "robots.txt", "Pronto — da pubblicare su /robots.txt"],
+    ["⚙️", "Google Search Console", "Da collegare manualmente (search.google.com/search-console)"],
+    ["⚙️", "Cloudflare CDN", "Da attivare su cloudflare.com dopo il deploy"],
+  ];
+
+  return (
+    <div style={{ display: "grid", gap: 20 }}>
+      {/* Stato SEO */}
+      <div className="card" style={{ padding: 24 }}>
+        <div className="pf" style={{ fontSize: 18, fontWeight: 700, color: "var(--ink)", marginBottom: 6 }}>🔍 Stato SEO — Solco.it</div>
+        <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 18 }}>Tutti i markup Schema.org implementati. Google può indicizzare offerte e borse come rich results.</div>
+        <div style={{ display: "grid", gap: 8 }}>
+          {checks.map(([ico, label, desc]) => (
+            <div key={label} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "9px 12px", borderRadius: 8, background: ico === "✅" ? "rgba(22,163,74,.05)" : "rgba(232,184,75,.05)", border: `1px solid ${ico === "✅" ? "rgba(22,163,74,.15)" : "rgba(232,184,75,.15)"}` }}>
+              <span style={{ fontSize: 16, flexShrink: 0 }}>{ico}</span>
+              <div><div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>{label}</div><div style={{ fontSize: 11, color: "var(--muted)", marginTop: 1 }}>{desc}</div></div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Sitemap */}
+      <div className="card" style={{ padding: 24 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div className="pf" style={{ fontSize: 16, fontWeight: 700, color: "var(--ink)" }}>📄 sitemap.xml</div>
+          <button className="btn btn-gold" onClick={() => copy(sitemap, "sitemap")} style={{ padding: "8px 16px", fontSize: 12 }}>{copied === "sitemap" ? "✅ Copiato!" : "📋 Copia"}</button>
+        </div>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>Pubblica questo file su <code style={{ background: "var(--cream)", padding: "1px 5px", borderRadius: 4 }}>https://solco.it/sitemap.xml</code></div>
+        <pre style={{ background: "var(--cream)", borderRadius: 8, padding: 14, fontSize: 11, color: "var(--ink)", overflowX: "auto", maxHeight: 180, lineHeight: 1.5 }}>{sitemap.slice(0, 600)}...</pre>
+      </div>
+
+      {/* Robots.txt */}
+      <div className="card" style={{ padding: 24 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div className="pf" style={{ fontSize: 16, fontWeight: 700, color: "var(--ink)" }}>🤖 robots.txt</div>
+          <button className="btn btn-teal" onClick={() => copy(robotsTxt, "robots")} style={{ padding: "8px 16px", fontSize: 12 }}>{copied === "robots" ? "✅ Copiato!" : "📋 Copia"}</button>
+        </div>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>Pubblica su <code style={{ background: "var(--cream)", padding: "1px 5px", borderRadius: 4 }}>https://solco.it/robots.txt</code></div>
+        <pre style={{ background: "var(--cream)", borderRadius: 8, padding: 14, fontSize: 12, color: "var(--ink)", lineHeight: 1.6 }}>{robotsTxt}</pre>
+      </div>
+
+      {/* Prossimi step */}
+      <div style={{ background: "var(--ink)", borderRadius: 16, padding: 24 }}>
+        <div className="pf" style={{ fontSize: 16, fontWeight: 700, color: "var(--gold)", marginBottom: 16 }}>🚀 Prossimi step SEO</div>
+        <div style={{ display: "grid", gap: 10 }}>
+          {[
+            ["1", "var(--teal2)", "Vai su search.google.com/search-console e aggiungi solco.it"],
+            ["2", "var(--gold)", "Carica sitemap.xml su Google Search Console → Sitemaps"],
+            ["3", "var(--violet2)", "Attiva Cloudflare su cloudflare.com (CDN + protezione)"],
+            ["4", "var(--lime2)", "Installa UptimeRobot per monitoraggio 24/7 gratuito"],
+            ["5", "var(--coral)", "Collega Google Analytics per tracciare il traffico"],
+          ].map(([n, c, text]) => (
+            <div key={n} style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <span style={{ background: c, color: "var(--ink)", borderRadius: 6, width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12, flexShrink: 0 }}>{n}</span>
+              <span style={{ fontSize: 13, color: "rgba(255,255,255,.7)" }}>{text}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════
+   SOLCO.IT — Sito Web Completo v3.0
+   Admin: admin@solco.it / Solco2026!
+══════════════════════════════════════════════ */
+
+const G = () => (
+  <style>{`
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700;800&display=swap');
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --ink:#0a1628; --ink2:#1a2d42; --ink3:#243650;
+      --gold:#e8b84b; --gold2:#f5d07a;
+      --coral:#ff6b6b; --violet:#7c3aed; --violet2:#a78bfa;
+      --teal:#0891b2; --teal2:#22d3ee;
+      --lime:#16a34a; --lime2:#4ade80;
+      --cream:#f9f7f4; --cream2:#f0ebe0;
+      --white:#ffffff; --muted:#6b7a8d; --border:rgba(10,22,40,.1);
+    }
+    html{scroll-behavior:smooth;}
+    body{background:var(--cream);color:var(--ink);font-family:'Inter',sans-serif;overflow-x:hidden;}
+    .pf{font-family:'Playfair Display',serif;}
+    ::-webkit-scrollbar{width:5px;}
+    ::-webkit-scrollbar-thumb{background:var(--gold);border-radius:99px;}
+
+    @keyframes fadeUp{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+    @keyframes pulse{0%,100%{transform:scale(1);opacity:.9}50%{transform:scale(1.6);opacity:.2}}
+    @keyframes shimmer{0%{background-position:-200% center}100%{background-position:200% center}}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+    @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+    @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+    @keyframes toastIn{from{transform:translate(-50%,80px);opacity:0}to{transform:translate(-50%,0);opacity:1}}
+    @keyframes gradMove{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+
+    .gold-text{background:linear-gradient(90deg,var(--gold),var(--gold2),var(--gold));background-size:200% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;animation:shimmer 3.5s linear infinite;}
+    .btn{display:inline-flex;align-items:center;gap:8px;border:none;border-radius:8px;cursor:pointer;font-family:'Inter',sans-serif;font-weight:700;font-size:14px;transition:all .2s ease;}
+    .btn-gold{background:var(--gold);color:var(--ink);padding:13px 28px;}
+    .btn-gold:hover{background:var(--gold2);transform:translateY(-2px);box-shadow:0 10px 30px rgba(232,184,75,.4);}
+    .btn-violet{background:var(--violet);color:#fff;padding:13px 28px;}
+    .btn-violet:hover{background:#6d28d9;transform:translateY(-2px);box-shadow:0 10px 30px rgba(124,58,237,.4);}
+    .btn-teal{background:var(--teal);color:#fff;padding:13px 28px;}
+    .btn-teal:hover{background:#0e7490;transform:translateY(-2px);box-shadow:0 10px 30px rgba(8,145,178,.4);}
+    .btn-coral{background:var(--coral);color:#fff;padding:13px 28px;}
+    .btn-coral:hover{background:#ef4444;transform:translateY(-2px);}
+    .btn-outline{background:transparent;color:var(--ink);border:2px solid var(--border);padding:12px 24px;}
+    .btn-outline:hover{border-color:var(--gold);color:var(--gold);}
+    .btn-outline-w{background:transparent;color:#fff;border:2px solid rgba(255,255,255,.3);padding:12px 24px;}
+    .btn-outline-w:hover{border-color:var(--gold);color:var(--gold);}
+    .card{background:var(--white);border:1px solid var(--border);border-radius:16px;transition:all .25s ease;}
+    .card:hover{box-shadow:0 16px 48px rgba(10,22,40,.1);transform:translateY(-3px);}
+    .inp{background:var(--white);border:1.5px solid var(--border);border-radius:10px;color:var(--ink);font-family:'Inter',sans-serif;font-size:14px;padding:12px 16px;width:100%;outline:none;transition:border-color .2s,box-shadow .2s;}
+    .inp:focus{border-color:var(--gold);box-shadow:0 0 0 3px rgba(232,184,75,.15);}
+    .inp::placeholder{color:var(--muted);}
+    .inp option{background:var(--white);color:var(--ink);}
+    .tag{display:inline-block;padding:4px 12px;border-radius:99px;font-size:11px;font-weight:700;letter-spacing:.3px;}
+    .sec-label{font-size:11px;font-weight:800;letter-spacing:3px;text-transform:uppercase;display:block;margin-bottom:10px;}
+    .hr-gold{height:1px;background:linear-gradient(90deg,transparent,var(--gold),transparent);border:none;margin:0;}
+    .hr-light{height:1px;background:linear-gradient(90deg,transparent,var(--border),transparent);border:none;margin:0;}
+    .pill{display:inline-flex;align-items:center;gap:6px;border-radius:99px;padding:6px 16px;font-size:12px;font-weight:700;}
+    .toast{position:fixed;bottom:32px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;border:1px solid rgba(232,184,75,.4);border-radius:12px;padding:14px 24px;font-size:14px;font-weight:600;z-index:9999;animation:toastIn .3s ease;box-shadow:0 12px 40px rgba(0,0,0,.35);white-space:nowrap;}
+  `}</style>
+);
+
+const JOBS = [
+  {id:"j1",title:"Educatore Professionale",org:"Cooperativa Sociale Aurora",city:"Milano",region:"Lombardia",sector:"Educativo",contract:"Tempo Determinato",salary_min:1400,salary_max:1700,type:"cooperativa",deadline:"2026-07-15",lat:45.46,lng:9.19,desc:"Ricerchiamo educatore per comunità minori. Esperienza nel disagio adolescenziale. CCNL Cooperative Sociali. Turni mattina/pomeriggio.",featured:true},
+  {id:"j2",title:"OSS – Operatore Socio Sanitario",org:"Fondazione Don Bosco",city:"Roma",region:"Lazio",sector:"Sanitario",contract:"Tempo Indeterminato",salary_min:1350,salary_max:1600,type:"fondazione",deadline:"2026-06-30",lat:41.90,lng:12.50,desc:"OSS per struttura residenziale anziani. Qualifica obbligatoria. Disponibilità turni inclusi festivi.",featured:true},
+  {id:"j3",title:"Assistente Sociale",org:"CESVI ONG",city:"Napoli",region:"Campania",sector:"Sociale",contract:"Tempo Determinato",salary_min:1600,salary_max:2000,type:"ong",deadline:"2026-08-01",lat:40.85,lng:14.27,desc:"Assistente sociale progetto migranti. Ottima conoscenza inglese. Esperienza con vulnerabilità richiesta.",featured:false},
+  {id:"j4",title:"Coordinatore di Progetto",org:"ActionAid Italia",city:"Torino",region:"Piemonte",sector:"Sociale",contract:"Tempo Indeterminato",salary_min:2000,salary_max:2500,type:"onlus",deadline:"2026-07-20",lat:45.07,lng:7.69,desc:"Coordinatore cooperazione internazionale. Gestione team e budget. Esperienza progetti UE richiesta.",featured:true},
+  {id:"j5",title:"Badante Convivente",org:"Famiglia Rossi",city:"Firenze",region:"Toscana",sector:"Assistenza",contract:"Sostituzione",salary_min:900,salary_max:1200,type:"privato",deadline:null,lat:43.77,lng:11.26,desc:"Badante convivente anziana autosufficiente. Piccole mansioni domestiche. Disponibilità immediata.",featured:false},
+  {id:"j6",title:"Psicologo Clinico",org:"Cooperativa Insieme",city:"Bologna",region:"Emilia-Romagna",sector:"Sanitario",contract:"Part-time",salary_min:1200,salary_max:1800,type:"cooperativa",deadline:"2026-09-01",lat:44.49,lng:11.34,desc:"Psicologo per consultorio familiare. 20h/sett. Iscrizione Albo obbligatoria.",featured:false},
+  {id:"j7",title:"Responsabile Comunicazione",org:"WeWorld ONG",city:"Genova",region:"Liguria",sector:"Comunicazione",contract:"Tempo Indeterminato",salary_min:2200,salary_max:2800,type:"ong",deadline:"2026-08-15",lat:44.41,lng:8.95,desc:"Responsabile comunicazione e raccolta fondi digitale. Esperienza fundraising social media.",featured:true},
+];
+
+const SCHOLARSHIPS = [
+  {id:"s1",title:"Borsa di Studio in Servizio Sociale",org:"Fondazione Cariplo",city:"Milano",region:"Lombardia",type:"borsa",amount:8000,deadline:"2026-09-30",level:"Laurea magistrale",desc:"Borsa annuale per studenti di Servizio Sociale con ISEE inferiore a €25.000. Stage 3 mesi presso ente partner incluso.",sector:"Sociale",color:"var(--violet)",featured:true},
+  {id:"s2",title:"Tirocinio in ONG Internazionale",org:"CESVI",city:"Bergamo",region:"Lombardia",type:"tirocinio",amount:600,deadline:"2026-07-15",level:"Laurea triennale/magistrale",desc:"Tirocinio curriculare o extracurriculare di 6 mesi. Rimborso spese €600/mese. Ambito cooperazione internazionale.",sector:"Cooperazione",color:"var(--teal)",featured:true},
+  {id:"s3",title:"Fellowship Giovani Leader Sociali",org:"Fondazione Con il Sud",city:"Roma",region:"Lazio",type:"fellowship",amount:12000,deadline:"2026-10-15",level:"Under 35",desc:"Fellowship annuale per giovani under 35 con progetto di impatto sociale nel Mezzogiorno. Mentorship e networking inclusi.",sector:"Sviluppo locale",color:"var(--coral)",featured:true},
+  {id:"s4",title:"Tirocinio OSS – RSA Convenzionata",org:"Cooperativa Sociale Aurora",city:"Brescia",region:"Lombardia",type:"tirocinio",amount:400,deadline:"2026-06-30",level:"Corso qualifica OSS",desc:"Tirocinio pratico per qualifica OSS. Struttura RSA. Rimborso €400/mese. Possibilità assunzione al termine.",sector:"Sanitario",color:"var(--lime)",featured:false},
+  {id:"s5",title:"Borsa Ricerca Non-profit Management",org:"SDA Bocconi",city:"Milano",region:"Lombardia",type:"borsa",amount:15000,deadline:"2026-11-01",level:"Master universitario",desc:"Borsa a copertura totale per Master in Non-profit Management. Selezione su merito e progetto di ricerca.",sector:"Management",color:"var(--gold)",featured:true},
+  {id:"s6",title:"Internship Comunicazione Sociale",org:"Amnesty International Italia",city:"Roma",region:"Lazio",type:"tirocinio",amount:500,deadline:"2026-08-31",level:"Laurea triennale",desc:"Tirocinio 4 mesi in comunicazione digitale e campagne. Rimborso €500/mese. Smart working parziale.",sector:"Comunicazione",color:"var(--violet)",featured:false},
+];
+
+const SC = {Sociale:"#7c3aed",Sanitario:"#0891b2",Educativo:"#d97706",Assistenza:"#e11d48",Tecnico:"#2563eb",Comunicazione:"#7c3aed",Cooperazione:"#0891b2","Sviluppo locale":"#dc2626",Management:"#e8b84b",default:"#6b7a8d"};
+const TL = {cooperativa:"Cooperativa",onlus:"ONLUS",fondazione:"Fondazione",ong:"ONG",privato:"Privato"};
+const ADMIN = {email:"admin@solco.it",pass:"Solco2026!"};
+
+function Logo({size=40,bg="transparent",gold="#e8b84b",text="#0a1628"}) {
+  const id = useRef("lg_"+Math.random().toString(36).substr(2,5)).current;
+  return (
+    <svg width={size} height={size} viewBox="0 0 320 320" style={{flexShrink:0}}>
+      <defs><path id={id} d="M160,160 m-118,0 a118,118 0 1,1 236,0 a118,118 0 1,1 -236,0"/></defs>
+      {bg!=="transparent"&&<circle cx="160" cy="160" r="158" fill={bg}/>}
+      <circle cx="160" cy="160" r="155" fill="none" stroke={gold} strokeWidth="2.5"/>
+      <circle cx="160" cy="160" r="149" fill="none" stroke={gold} strokeWidth=".8" strokeOpacity=".5"/>
+      <text fontSize="13" fontFamily="Georgia,serif" fill={gold} fontWeight="500">
+        <textPath href={"#"+id} startOffset="0%"><tspan letterSpacing="9.2">SOLCO · TERZO SETTORE · ITALIA · LAVORO SOCIALE ·</tspan></textPath>
+      </text>
+      <circle cx="160" cy="160" r="108" fill="none" stroke={gold} strokeWidth="1.2"/>
+      <circle cx="160" cy="160" r="104" fill="none" stroke={gold} strokeWidth=".5" strokeOpacity=".4"/>
+      <g transform="translate(160,110) scale(.82)">
+        <path d="M-8,-45 C-6,-45 2,-42 6,-35 C10,-28 10,-18 8,-8 C6,2 10,10 14,18 C18,26 16,34 10,38 C6,42 2,44 -2,42 C-8,38 -10,30 -6,22 C-2,14 -4,8 -8,2 C-12,-4 -14,-14 -12,-24 C-10,-34 -10,-42 -8,-45Z" fill={gold} fillOpacity=".9"/>
+        <ellipse cx="-14" cy="46" rx="8" ry="5" fill={gold} fillOpacity=".7" transform="rotate(-15,-14,46)"/>
+        <ellipse cx="-28" cy="10" rx="5" ry="9" fill={gold} fillOpacity=".5" transform="rotate(-8,-28,10)"/>
+      </g>
+      <line x1="62" y1="200" x2="98" y2="200" stroke={gold} strokeWidth="1" opacity=".7"/>
+      <line x1="222" y1="200" x2="258" y2="200" stroke={gold} strokeWidth="1" opacity=".7"/>
+      <circle cx="62" cy="200" r="2" fill={gold} opacity=".7"/>
+      <circle cx="258" cy="200" r="2" fill={gold} opacity=".7"/>
+      <text x="160" y="212" textAnchor="middle" fontFamily="Georgia,serif" fontSize="34" fontWeight="700" fill={text} letterSpacing="10">SOLCO</text>
+      {[-40,-20,0,20,40].map((o,i)=><text key={i} x={160+o} y="252" textAnchor="middle" fontSize="7" fill={gold} opacity=".6">★</text>)}
+      <text x="160" y="268" textAnchor="middle" fontFamily="Georgia,serif" fontSize="9" fill={gold} letterSpacing="3" opacity=".7">EST. 2026</text>
+      <path d="M 90 278 Q 160 290 230 278" fill="none" stroke={gold} strokeWidth=".8" opacity=".4"/>
+    </svg>
+  );
+}
+
+function Toast({msg,onDone}) {
+  useEffect(()=>{const t=setTimeout(onDone,2800);return()=>clearTimeout(t);},[]);
+  return <div className="toast">✅ {msg}</div>;
+}
+
+function Navbar({page,setPage,user,onLoginOpen,onLogout}) {
+  const [sc,setSc]=useState(false);
+  useEffect(()=>{const fn=()=>setSc(window.scrollY>50);window.addEventListener("scroll",fn);return()=>window.removeEventListener("scroll",fn);},[]);
+  const links=[["home","Home"],["jobs","Lavoro"],["scholarships","Borse & Tirocini"],["map","Mappa"],["privacy","Privacy"],["guida","Guida & P.IVA"],["about","Chi siamo"]];
+  return (
+    <nav style={{position:"fixed",top:0,left:0,right:0,zIndex:200,height:64,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 28px",
+      background:sc?"rgba(249,247,244,.97)":"transparent",backdropFilter:sc?"blur(20px)":"none",
+      borderBottom:sc?"1px solid rgba(10,22,40,.07)":"none",transition:"all .3s"}}>
+      <div onClick={()=>setPage("home")} style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+        <Logo size={38} gold="#e8b84b" text="#0a1628"/>
+        <div>
+          <div className="pf" style={{fontWeight:900,fontSize:16,letterSpacing:2,color:sc?"var(--ink)":"#fff",lineHeight:1,transition:"color .3s"}}>SOLCO</div>
+          <div style={{fontSize:8,letterSpacing:2,color:sc?"var(--muted)":"rgba(255,255,255,.45)",marginTop:1,transition:"color .3s"}}>TERZO SETTORE</div>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:0}}>
+        {links.map(([p,l])=>(
+          <button key={p} onClick={()=>setPage(p)} className="btn" style={{background:"none",color:page===p?"var(--gold)":sc?"var(--ink)":"rgba(255,255,255,.8)",fontSize:12,fontWeight:page===p?700:500,padding:"7px 10px",borderRadius:6,borderBottom:page===p?"2px solid var(--gold)":"2px solid transparent",transition:"all .2s"}}>
+            {l}
+          </button>
+        ))}
+      </div>
+      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+        {user?(
+          <>
+            {user.role==="admin"&&<button onClick={()=>setPage("admin")} className="btn btn-gold" style={{padding:"7px 14px",fontSize:12}}>⚙ Admin</button>}
+            <button onClick={()=>setPage("profile")} className="btn btn-outline" style={{padding:"7px 16px",fontSize:13}}>{user.name.split(" ")[0]}</button>
+            <button onClick={onLogout} className="btn" style={{background:"none",color:"var(--muted)",fontSize:13,padding:"7px 10px"}}>Esci</button>
+          </>
+        ):(
+          <>
+            <button onClick={()=>onLoginOpen("login")} className="btn btn-outline" style={{padding:"8px 18px"}}>Accedi</button>
+            <button onClick={()=>onLoginOpen("register")} className="btn btn-gold" style={{padding:"8px 18px"}}>Registrati</button>
+          </>
+        )}
+      </div>
+    </nav>
+  );
+}
+
+function Hero({setPage}) {
+  const [typed,setTyped]=useState("");
+  const words=["cooperative sociali","ONLUS e fondazioni","ONG internazionali","privati e famiglie"];
+  const [wi,setWi]=useState(0);
+  const [ci,setCi]=useState(0);
+  const [del,setDel]=useState(false);
+  useEffect(()=>{
+    const w=words[wi];
+    const t=setTimeout(()=>{
+      if(!del&&ci<w.length){setTyped(w.slice(0,ci+1));setCi(c=>c+1);}
+      else if(!del&&ci===w.length){setTimeout(()=>setDel(true),1500);}
+      else if(del&&ci>0){setTyped(w.slice(0,ci-1));setCi(c=>c-1);}
+      else{setDel(false);setWi(i=>(i+1)%words.length);}
+    },del?55:105);
+    return()=>clearTimeout(t);
+  },[ci,del,wi]);
+
+  const ItalySVG = () => (
+    <svg width="340" height="420" viewBox="55 58 265 345" style={{opacity:.18}}>
+      <rect x="55" y="58" width="265" height="345" fill="transparent"/>
+      {[["M160 90 L200 85 L220 100 L210 120 L180 125 L155 115 Z","#e8b84b"],
+        ["M100 95 L155 85 L160 90 L155 115 L120 130 L90 110 Z","#a78bfa"],
+        ["M90 135 L155 120 L165 135 L130 148 L90 145 Z","#22d3ee"],
+        ["M130 155 L185 145 L195 175 L175 200 L140 195 L120 175 Z","#4ade80"],
+        ["M150 200 L195 195 L200 230 L170 250 L145 235 Z","#f87171"],
+        ["M175 255 L215 245 L225 275 L200 295 L175 280 Z","#e8b84b"],
+        ["M150 340 L205 335 L215 360 L185 375 L150 365 Z","#22d3ee"],
+        ["M225 240 L260 235 L270 280 L245 305 L225 285 Z","#a78bfa"],
+        ["M215 85 L255 80 L260 105 L235 115 L215 108 Z","#4ade80"],
+        ["M160 120 L220 115 L225 140 L175 150 L155 138 Z","#f87171"],
+        ["M215 305 L240 300 L240 345 L215 350 L210 330 Z","#22d3ee"],
+        ["M90 255 L120 250 L125 300 L100 310 L82 290 Z","#e8b84b"],
+      ].map(([d,c],i)=>(
+        <path key={i} d={d} fill={c} stroke="rgba(255,255,255,.15)" strokeWidth=".8"/>
+      ))}
+      {JOBS.filter(j=>j.lat).map((j,i)=>{
+        const x=(j.lng-6.5)*14,y=400-(j.lat-36)*15;
+        const c=SC[j.sector]||"#fff";
+        return <g key={i}><circle cx={x} cy={y} r="5" fill={c} opacity=".9" style={{animation:`pulse ${1.5+i*.2}s ease-in-out infinite`}}/><circle cx={x} cy={y} r="11" fill="none" stroke={c} strokeWidth=".8" opacity=".4" style={{animation:`pulse ${1.5+i*.2}s ease-in-out infinite`}}/></g>;
+      })}
+    </svg>
+  );
+
+  return (
+    <section style={{minHeight:"100vh",position:"relative",display:"flex",alignItems:"center",overflow:"hidden",paddingTop:64,background:"var(--ink)"}}>
+      <div style={{position:"absolute",inset:0,background:"linear-gradient(135deg,#0a1628 0%,#1a1060 40%,#0a2840 70%,#0d1f3a 100%)",backgroundSize:"400% 400%",animation:"gradMove 12s ease infinite"}}/>
+      <div style={{position:"absolute",inset:0,opacity:.035,backgroundImage:"linear-gradient(rgba(232,184,75,1)1px,transparent 1px),linear-gradient(90deg,rgba(232,184,75,1)1px,transparent 1px)",backgroundSize:"72px 72px"}}/>
+      <div style={{position:"absolute",top:"15%",left:"-5%",width:500,height:500,borderRadius:"50%",background:"radial-gradient(circle,rgba(124,58,237,.12) 0%,transparent 70%)"}}/>
+      <div style={{position:"absolute",bottom:"10%",right:"-5%",width:400,height:400,borderRadius:"50%",background:"radial-gradient(circle,rgba(8,145,178,.1) 0%,transparent 70%)"}}/>
+      <div style={{position:"absolute",right:"3%",top:"50%",transform:"translateY(-50%)",pointerEvents:"none"}}><ItalySVG/></div>
+
+      <div style={{position:"relative",zIndex:2,maxWidth:1100,margin:"0 auto",padding:"0 40px",width:"100%"}}>
+        <div style={{maxWidth:680}}>
+          <div className="pill" style={{background:"rgba(232,184,75,.12)",border:"1px solid rgba(232,184,75,.28)",color:"var(--gold)",marginBottom:32,animation:"fadeIn 1s ease"}}>
+            <span style={{width:7,height:7,borderRadius:"50%",background:"var(--gold)",display:"inline-block",animation:"pulse 1.5s ease-in-out infinite"}}/>
+            {JOBS.length+SCHOLARSHIPS.length} OPPORTUNITÀ ATTIVE · AGGIORNATO OGNI GIORNO
+          </div>
+          <h1 className="pf" style={{fontSize:"clamp(40px,5.5vw,72px)",fontWeight:900,lineHeight:1.06,color:"#fff",marginBottom:22}}>
+            Il lavoro che
+            <span className="gold-text" style={{display:"block",fontStyle:"italic"}}>costruisce comunità</span>
+          </h1>
+          <div style={{fontSize:17,color:"rgba(255,255,255,.6)",lineHeight:1.6,marginBottom:8}}>
+            Offerte da <span style={{color:"var(--gold)",fontWeight:700}}>{typed}</span>
+            <span style={{animation:"blink 1s step-end infinite",color:"var(--gold)"}}>|</span>
+          </div>
+          <p style={{fontSize:15,color:"rgba(255,255,255,.38)",lineHeight:1.8,marginBottom:40,maxWidth:520}}>
+            Aggregatore intelligente di lavoro, borse di studio e tirocini nel Terzo Settore italiano. Ogni giorno raccogliamo opportunità da 247 organizzazioni.
+          </p>
+          <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+            <button className="btn btn-gold" onClick={()=>setPage("jobs")} style={{padding:"15px 32px",fontSize:15}}>Cerca lavoro →</button>
+            <button className="btn btn-violet" onClick={()=>setPage("scholarships")} style={{padding:"14px 26px",fontSize:15}}>🎓 Borse & Tirocini</button>
+            <button className="btn btn-outline-w" onClick={()=>setPage("map")} style={{padding:"14px 22px",fontSize:14}}>🗺 Mappa</button>
+          </div>
+          <div style={{display:"flex",gap:48,marginTop:64,flexWrap:"wrap"}}>
+            {[["247","Enti monitorati","var(--gold)"],["1.840","Offerte quest'anno","var(--violet2)"],["86","Borse & tirocini","var(--teal2)"],["14","Regioni","var(--lime2)"]].map(([n,l,c])=>(
+              <div key={l}>
+                <div className="pf" style={{fontSize:40,fontWeight:700,color:c,lineHeight:1}}>{n}</div>
+                <div style={{fontSize:11,color:"rgba(255,255,255,.32)",marginTop:4,letterSpacing:.4}}>{l}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Cards floating right */}
+      <div style={{position:"absolute",right:40,bottom:"12%",display:"flex",flexDirection:"column",gap:10,zIndex:3}}>
+        {[{c:"var(--violet)",ico:"🎓",t:"Fellowship disponibile",s:"Fondazione Con il Sud"},{c:"var(--teal)",ico:"💼",t:"3 nuove offerte oggi",s:"Lombardia"},{c:"var(--coral)",ico:"🏅",t:"Borsa €15.000",s:"SDA Bocconi"}].map((item,i)=>(
+          <div key={i} style={{background:"rgba(255,255,255,.07)",backdropFilter:"blur(20px)",border:"1px solid rgba(255,255,255,.12)",borderRadius:12,padding:"10px 16px",display:"flex",alignItems:"center",gap:10,animation:`float ${3.5+i*.5}s ease-in-out infinite`,minWidth:220}}>
+            <div style={{width:34,height:34,borderRadius:8,background:item.c,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{item.ico}</div>
+            <div><div style={{fontSize:12,fontWeight:700,color:"#fff"}}>{item.t}</div><div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>{item.s}</div></div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function StatsStrip() {
+  return (
+    <div style={{background:"var(--ink2)",borderBottom:"1px solid rgba(255,255,255,.06)"}}>
+      <div style={{maxWidth:1100,margin:"0 auto",display:"grid",gridTemplateColumns:"repeat(4,1fr)"}}>
+        {[["💼","Offerte lavoro",JOBS.length,"var(--gold)"],["🎓","Borse & tirocini",SCHOLARSHIPS.length,"var(--violet2)"],["🏢","Organizzazioni","247","var(--teal2)"],["🗺","Regioni coperte","14","var(--lime2)"]].map(([ico,l,v,c],i)=>(
+          <div key={l} style={{padding:"24px",borderRight:i<3?"1px solid rgba(255,255,255,.06)":"none",textAlign:"center"}}>
+            <div style={{fontSize:22,marginBottom:4}}>{ico}</div>
+            <div className="pf" style={{fontSize:32,fontWeight:700,color:c,lineHeight:1}}>{v}</div>
+            <div style={{fontSize:11,color:"rgba(255,255,255,.28)",marginTop:3}}>{l}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SectionHeader({label,title,sub,light=false}) {
+  return (
+    <div style={{position:"relative",padding:"56px 40px 44px",background:light?"var(--cream)":"var(--ink)"}}>
+      <div style={{maxWidth:1100,margin:"0 auto"}}>
+        <span className="sec-label" style={{color:light?"var(--gold)":"rgba(255,255,255,.4)"}}>{label}</span>
+        <h1 className="pf" style={{fontSize:44,fontWeight:900,color:light?"var(--ink)":"#fff",marginBottom:8}}>{title}</h1>
+        {sub&&<p style={{color:light?"var(--muted)":"rgba(255,255,255,.4)",fontSize:15,maxWidth:560}}>{sub}</p>}
+      </div>
+    </div>
+  );
+}
+
+function JobCard({job,onClick,selected}) {
+  const c=SC[job.sector]||SC.default;
+  const days=job.deadline?Math.ceil((new Date(job.deadline)-new Date())/86400000):null;
+  return (
+    <div className="card" onClick={()=>onClick(job)} style={{padding:"20px 22px",cursor:"pointer",borderTop:`3px solid ${c}`,background:selected?"rgba(232,184,75,.04)":"var(--white)",borderColor:selected?`${c}`:`${c}`}}>
+      {job.featured&&<div style={{marginBottom:8}}><span className="tag" style={{background:"rgba(232,184,75,.1)",color:"var(--gold)",border:"1px solid rgba(232,184,75,.22)",fontSize:9,letterSpacing:.5}}>★ IN EVIDENZA</span></div>}
+      <div style={{fontWeight:700,fontSize:15,color:"var(--ink)",marginBottom:4,lineHeight:1.3}}>{job.title}</div>
+      <div style={{color:c,fontSize:12,fontWeight:600,marginBottom:12}}>{job.org}</div>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
+        <span className="tag" style={{background:`${c}14`,color:c,border:`1px solid ${c}25`}}>{job.sector}</span>
+        <span className="tag" style={{background:"rgba(10,22,40,.04)",color:"var(--muted)",border:"1px solid var(--border)"}}>{TL[job.type]||job.type}</span>
+        <span className="tag" style={{background:"rgba(10,22,40,.04)",color:"var(--muted)",border:"1px solid var(--border)"}}>{job.contract}</span>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"var(--muted)"}}>
+        <span>📍 {job.city}, {job.region}</span>
+        <span style={{color:"var(--ink)",fontWeight:700}}>{job.salary_min?`€${job.salary_min.toLocaleString()}–${job.salary_max?.toLocaleString()}`:"Volontariato"}</span>
+      </div>
+      {days!==null&&<div style={{marginTop:8,paddingTop:8,borderTop:"1px solid var(--border)",fontSize:11,fontWeight:700,color:days<7?"var(--coral)":days<14?"#d97706":"var(--lime)"}}>{days<0?"⚠ Scaduta":days===0?"⏰ Scade oggi":`⏳ Scade tra ${days} giorni`}</div>}
+    </div>
+  );
+}
+
+function JobDetail({job,onClose}) {
+  const c=SC[job.sector]||SC.default;
+  return (
+    <div className="card" style={{padding:28,animation:"fadeIn .25s ease",position:"sticky",top:80,alignSelf:"start"}}>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:20}}>
+        <div>
+          <div className="pf" style={{fontSize:20,fontWeight:700,color:"var(--ink)",lineHeight:1.2,marginBottom:4}}>{job.title}</div>
+          <div style={{color:c,fontWeight:600}}>{job.org}</div>
+        </div>
+        <button onClick={onClose} style={{background:"var(--cream2)",border:"none",borderRadius:8,width:32,height:32,cursor:"pointer",color:"var(--muted)",fontSize:16,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:18}}>
+        {[["📍 Luogo",`${job.city}, ${job.region}`],["💼 Contratto",job.contract],["🏢 Tipo org.",TL[job.type]||job.type],["💰 Stipendio",job.salary_min?`€${job.salary_min.toLocaleString()}–${job.salary_max?.toLocaleString()}`:"Volontariato/da concordare"]].map(([l,v])=>(
+          <div key={l} style={{background:"var(--cream)",borderRadius:8,padding:"10px 12px"}}>
+            <div style={{fontSize:10,color:"var(--muted)",fontWeight:700,marginBottom:2,letterSpacing:.5}}>{l}</div>
+            <div style={{fontSize:13,fontWeight:600,color:"var(--ink)"}}>{v}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{background:"var(--cream)",borderRadius:10,padding:16,marginBottom:18}}>
+        <div style={{fontSize:10,color:"var(--muted)",fontWeight:700,letterSpacing:1,marginBottom:8}}>DESCRIZIONE</div>
+        <p style={{fontSize:13,color:"var(--ink)",lineHeight:1.75}}>{job.desc}</p>
+      </div>
+      {job.deadline&&<div style={{marginBottom:16,padding:"8px 12px",background:"rgba(255,107,107,.06)",border:"1px solid rgba(255,107,107,.15)",borderRadius:8,fontSize:12,color:"var(--coral)",fontWeight:600}}>📅 Scadenza: {job.deadline}</div>}
+      <button className="btn btn-gold" style={{width:"100%",justifyContent:"center",padding:13,fontSize:14}}>Vai all'offerta originale →</button>
+      <div style={{textAlign:"center",marginTop:8,fontSize:11,color:"var(--muted)"}}>Sarai reindirizzato al sito ufficiale di {job.org}</div>
+    </div>
+  );
+}
+
+function JobsPage({ setPage }) {
+  const [search, setSearch] = useState("");
+  const [sector, setSector] = useState("Tutti");
+  const [contract, setContract] = useState("Tutti");
+  const [salMin, setSalMin] = useState(0);
+  const [type, setType] = useState("Tutti");
+  const [sel, setSel] = useState(null);
+  const [geoFilter, setGeoFilter] = useState(null);
+  const [geoActive, setGeoActive] = useState(false);
+
+  const baseFiltered = JOBS.filter(j => {
+    if (search && ![j.title, j.org, j.city, j.region].some(s => s.toLowerCase().includes(search.toLowerCase()))) return false;
+    if (sector !== "Tutti" && j.sector !== sector) return false;
+    if (contract !== "Tutti" && j.contract !== contract) return false;
+    if (type !== "Tutti" && j.type !== type) return false;
+    if (salMin > 0 && (!j.salary_min || j.salary_min < salMin)) return false;
+    return true;
+  });
+
+  const filtered = geoActive && geoFilter
+    ? baseFiltered.filter(j => {
+        if (!j.lat || !j.lng) return false;
+        return distanceKm(geoFilter.coords.latitude, geoFilter.coords.longitude, j.lat, j.lng) <= geoFilter.radius;
+      }).map(j => ({
+        ...j,
+        _distKm: Math.round(distanceKm(geoFilter.coords.latitude, geoFilter.coords.longitude, j.lat, j.lng))
+      })).sort((a, b) => a._distKm - b._distKm)
+    : baseFiltered;
+
+  const clearAll = () => { setSearch(""); setSector("Tutti"); setContract("Tutti"); setType("Tutti"); setSalMin(0); setGeoActive(false); setGeoFilter(null); };
+  const anyFilter = search || sector !== "Tutti" || contract !== "Tutti" || type !== "Tutti" || salMin > 0 || geoActive;
+
+  return (
+    <div style={{ paddingTop: 64, minHeight: "100vh", background: "var(--cream)" }}>
+      <SectionHeader label="OPPORTUNITÀ DI LAVORO" title="Offerte attive" sub={`${filtered.length} posizioni aperte nel Terzo Settore italiano`} />
+      <hr className="hr-gold" />
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 40px 60px" }}>
+
+        {/* Barra filtri principale */}
+        <div style={{ background: "var(--white)", border: "1px solid var(--border)", borderRadius: 12, padding: 16, marginBottom: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+            <SmartSearch
+              value={search}
+              onChange={setSearch}
+              jobs={JOBS}
+              scholarships={SCHOLARSHIPS}
+              onSelectJob={j => { setSel(j); setSearch(j.title); }}
+              onSelectScholarship={s => setPage("scholarships")}
+            />
+            <select className="inp" value={sector} onChange={e => setSector(e.target.value)}>
+              {["Tutti", "Sociale", "Sanitario", "Educativo", "Assistenza", "Tecnico", "Comunicazione"].map(s => <option key={s}>{s}</option>)}
+            </select>
+            <select className="inp" value={contract} onChange={e => setContract(e.target.value)}>
+              {["Tutti", "Tempo Indeterminato", "Tempo Determinato", "Part-time", "Sostituzione", "Volontariato"].map(c => <option key={c}>{c}</option>)}
+            </select>
+            <select className="inp" value={type} onChange={e => setType(e.target.value)}>
+              <option value="Tutti">Tutti i tipi</option>
+              {Object.entries(TL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+            <select className="inp" value={salMin} onChange={e => setSalMin(+e.target.value)}>
+              <option value={0}>Qualsiasi stipendio</option>
+              {[800, 1000, 1200, 1500, 2000].map(v => <option key={v} value={v}>Min €{v.toLocaleString()}</option>)}
+            </select>
+          </div>
+          {/* Geo filter */}
+          <GeoFilterBar
+            onFilter={f => { setGeoFilter(f); setGeoActive(true); }}
+            active={geoActive}
+            onClear={() => { setGeoActive(false); setGeoFilter(null); }}
+          />
+        </div>
+
+        {anyFilter && (
+          <div style={{ marginBottom: 16, fontSize: 13, color: "var(--muted)", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <span>{filtered.length} risultati trovati</span>
+            {geoActive && geoFilter && <span className="tag" style={{ background: "rgba(8,145,178,.1)", color: "var(--teal)", border: "1px solid rgba(8,145,178,.2)" }}>📍 Entro {geoFilter.radius}km</span>}
+            <button onClick={clearAll} style={{ background: "none", border: "none", color: "var(--gold)", cursor: "pointer", fontWeight: 700 }}>✕ Cancella tutto</button>
+          </div>
+        )}
+
+        <div style={{ display: "grid", gridTemplateColumns: sel ? "1fr 400px" : "repeat(auto-fill,minmax(320px,1fr))", gap: 18 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", gap: 14, alignContent: "start" }}>
+            {filtered.length === 0 ? (
+              <div style={{ gridColumn: "1/-1", textAlign: "center", padding: "80px 0", color: "var(--muted)" }}>
+                <div style={{ fontSize: 48, marginBottom: 14 }}>🔍</div>
+                <div style={{ fontWeight: 700, fontSize: 18, color: "var(--ink)", marginBottom: 8 }}>Nessuna offerta trovata</div>
+                <div style={{ fontSize: 14, marginBottom: 16 }}>Prova a modificare i filtri o amplia il raggio di ricerca</div>
+                {geoActive && <button className="btn btn-teal" onClick={() => { setGeoActive(false); setGeoFilter(null); }} style={{ padding: "10px 20px", fontSize: 13 }}>Rimuovi filtro posizione</button>}
+              </div>
+            ) : filtered.map(j => (
+              <div key={j.id} style={{ position: "relative" }}>
+                {j._distKm !== undefined && (
+                  <div style={{ position: "absolute", top: 10, right: 10, zIndex: 1, background: "rgba(8,145,178,.1)", border: "1px solid rgba(8,145,178,.25)", borderRadius: 99, padding: "2px 8px", fontSize: 10, color: "var(--teal)", fontWeight: 700 }}>
+                    📍 {j._distKm}km
+                  </div>
+                )}
+                <JobCard job={j} selected={sel?.id === j.id} onClick={j => setSel(sel?.id === j.id ? null : j)} />
+                <button onClick={() => setPage("job_" + j.id)} style={{ width: "100%", marginTop: 6, background: "none", border: "1px solid var(--border)", borderRadius: 8, padding: "7px", fontSize: 12, color: "var(--muted)", cursor: "pointer", fontWeight: 600, transition: "all .15s" }}
+                  onMouseEnter={e => { e.target.style.borderColor = "var(--gold)"; e.target.style.color = "var(--gold)"; }}
+                  onMouseLeave={e => { e.target.style.borderColor = "var(--border)"; e.target.style.color = "var(--muted)"; }}>
+                  Vedi pagina completa →
+                </button>
+              </div>
+            ))}
+          </div>
+          {sel && <JobDetail job={sel} onClose={() => setSel(null)} />}
+        </div>
+
+        {/* Alert email in fondo alla lista */}
+        <div style={{ marginTop: 40, maxWidth: 600 }}>
+          <AlertEmailBox />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ScholarshipsPage({onLoginOpen}) {
+  const [filter,setFilter]=useState("Tutti");
+  const [search,setSearch]=useState("");
+  const [sel,setSel]=useState(null);
+  const filtered=SCHOLARSHIPS.filter(s=>{
+    if(filter!=="Tutti"&&s.type!==filter)return false;
+    if(search&&![s.title,s.org,s.city].some(x=>x.toLowerCase().includes(search.toLowerCase())))return false;
+    return true;
+  });
+  const TypeIcon={borsa:"🏅",tirocinio:"🔬",fellowship:"🚀"};
+  const TypeLabel={borsa:"Borsa di studio",tirocinio:"Tirocinio",fellowship:"Fellowship"};
+  const TypeColor={borsa:"var(--violet)",tirocinio:"var(--teal)",fellowship:"var(--coral)"};
+  return (
+    <div style={{paddingTop:64,minHeight:"100vh",background:"var(--cream)"}}>
+      {/* Header grafico senza immagini */}
+      <div style={{background:"linear-gradient(135deg,var(--violet) 0%,var(--teal) 60%,var(--lime) 100%)",padding:"56px 40px 44px",position:"relative",overflow:"hidden"}}>
+        <div style={{position:"absolute",inset:0,opacity:.07,backgroundImage:"linear-gradient(rgba(255,255,255,1)1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,1)1px,transparent 1px)",backgroundSize:"50px 50px"}}/>
+        <div style={{position:"absolute",top:-60,right:-60,width:300,height:300,borderRadius:"50%",border:"60px solid rgba(255,255,255,.06)"}}/>
+        <div style={{position:"absolute",bottom:-80,left:"30%",width:240,height:240,borderRadius:"50%",border:"40px solid rgba(255,255,255,.05)"}}/>
+        <div style={{maxWidth:1100,margin:"0 auto",position:"relative",zIndex:1}}>
+          <span className="sec-label" style={{color:"rgba(255,255,255,.6)"}}>FORMAZIONE E CRESCITA</span>
+          <h1 className="pf" style={{fontSize:50,fontWeight:900,color:"#fff",marginBottom:10}}>Borse di Studio & Tirocini</h1>
+          <p style={{color:"rgba(255,255,255,.65)",fontSize:16,maxWidth:580,lineHeight:1.7}}>Opportunità formative, fellowship e stage nel Terzo Settore italiano. Investi nel tuo futuro professionale.</p>
+          <div style={{display:"flex",gap:16,marginTop:28,flexWrap:"wrap"}}>
+            {[["borsa",SCHOLARSHIPS.filter(s=>s.type==="borsa").length,"🏅","rgba(124,58,237,.35)"],["tirocinio",SCHOLARSHIPS.filter(s=>s.type==="tirocinio").length,"🔬","rgba(8,145,178,.35)"],["fellowship",SCHOLARSHIPS.filter(s=>s.type==="fellowship").length,"🚀","rgba(255,107,107,.35)"]].map(([t,n,ico,bg])=>(
+              <div key={t} style={{background:bg,backdropFilter:"blur(10px)",border:"1px solid rgba(255,255,255,.15)",borderRadius:12,padding:"14px 20px",display:"flex",alignItems:"center",gap:10,cursor:"pointer"}} onClick={()=>setFilter(filter===t?"Tutti":t)}>
+                <span style={{fontSize:22}}>{ico}</span>
+                <div><div style={{color:"#fff",fontWeight:800,fontSize:20,lineHeight:1}}>{n}</div><div style={{color:"rgba(255,255,255,.65)",fontSize:11,textTransform:"capitalize"}}>{t}</div></div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <hr className="hr-gold"/>
+      <div style={{maxWidth:1100,margin:"0 auto",padding:"32px 40px 60px"}}>
+        {/* Filtri */}
+        <div style={{display:"flex",gap:12,marginBottom:28,flexWrap:"wrap",alignItems:"center"}}>
+          <div style={{position:"relative",flex:"1",minWidth:240}}>
+            <span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",color:"var(--muted)"}}>🔍</span>
+            <input className="inp" placeholder="Cerca borsa, ente, città..." value={search} onChange={e=>setSearch(e.target.value)} style={{paddingLeft:40}}/>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            {["Tutti","borsa","tirocinio","fellowship"].map(f=>(
+              <button key={f} onClick={()=>setFilter(f)} className="btn" style={{padding:"9px 16px",fontSize:13,
+                background:filter===f?"var(--violet)":"var(--white)",
+                color:filter===f?"#fff":"var(--muted)",
+                border:`1.5px solid ${filter===f?"var(--violet)":"var(--border)"}`,borderRadius:8}}>
+                {f==="Tutti"?"Tutti":TypeIcon[f]+" "+TypeLabel[f]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Card in evidenza */}
+        {filter==="Tutti"&&(
+          <div style={{marginBottom:36}}>
+            <div style={{fontSize:12,fontWeight:800,color:"var(--muted)",letterSpacing:2,marginBottom:14}}>⭐ IN EVIDENZA</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:18}}>
+              {SCHOLARSHIPS.filter(s=>s.featured).slice(0,3).map(s=>(
+                <div key={s.id} className="card" onClick={()=>setSel(sel?.id===s.id?null:s)} style={{cursor:"pointer",overflow:"hidden"}}>
+                  <div style={{height:110,background:`linear-gradient(135deg,${s.color}cc,${s.color}44)`,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 20px",position:"relative"}}>
+                    <div style={{fontSize:44}}>{TypeIcon[s.type]}</div>
+                    <div style={{textAlign:"right"}}>
+                      {s.amount&&<div style={{fontSize:22,fontWeight:800,color:"#fff"}}>€{s.amount.toLocaleString()}</div>}
+                      <div style={{fontSize:11,color:"rgba(255,255,255,.7)",marginTop:2}}>{s.type==="borsa"?"valore totale":"al mese"}</div>
+                    </div>
+                    <span className="tag" style={{position:"absolute",top:10,left:10,background:"rgba(0,0,0,.25)",color:"#fff",fontSize:9,letterSpacing:.5}}>{TypeLabel[s.type]}</span>
+                  </div>
+                  <div style={{padding:"16px 18px"}}>
+                    <div style={{fontWeight:700,fontSize:14,color:"var(--ink)",marginBottom:3,lineHeight:1.3}}>{s.title}</div>
+                    <div style={{color:s.color,fontSize:12,fontWeight:600,marginBottom:8}}>{s.org}</div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+                      <span className="tag" style={{background:"rgba(10,22,40,.04)",color:"var(--muted)",border:"1px solid var(--border)",fontSize:10}}>📍 {s.city}</span>
+                      <span className="tag" style={{background:"rgba(10,22,40,.04)",color:"var(--muted)",border:"1px solid var(--border)",fontSize:10}}>🎓 {s.level}</span>
+                    </div>
+                    {s.deadline&&<div style={{fontSize:11,fontWeight:700,color:"var(--coral)"}}>⏳ Scade: {s.deadline}</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Lista tutte */}
+        <div style={{fontSize:12,fontWeight:800,color:"var(--muted)",letterSpacing:2,marginBottom:14}}>TUTTE LE OPPORTUNITÀ ({filtered.length})</div>
+        <div style={{display:"grid",gap:12}}>
+          {filtered.map(s=>(
+            <div key={s.id} className="card" onClick={()=>setSel(sel?.id===s.id?null:s)} style={{padding:"20px 24px",cursor:"pointer",borderLeft:`4px solid ${s.color}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:12}}>
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8,flexWrap:"wrap"}}>
+                    <span className="tag" style={{background:TypeColor[s.type]+"18",color:TypeColor[s.type],border:`1px solid ${TypeColor[s.type]}30`}}>{TypeIcon[s.type]} {TypeLabel[s.type]}</span>
+                    <span className="tag" style={{background:"rgba(10,22,40,.04)",color:"var(--muted)",border:"1px solid var(--border)",fontSize:10}}>{s.sector}</span>
+                  </div>
+                  <div style={{fontWeight:700,fontSize:16,color:"var(--ink)",marginBottom:3}}>{s.title}</div>
+                  <div style={{color:s.color,fontSize:13,fontWeight:600}}>{s.org} · {s.city}, {s.region}</div>
+                  {sel?.id===s.id&&(
+                    <div style={{marginTop:16,animation:"fadeIn .2s ease"}}>
+                      <p style={{fontSize:14,color:"var(--muted)",lineHeight:1.8,marginBottom:16}}>{s.desc}</p>
+                      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
+                        {[["🎓 Livello",s.level],["💰 Valore",s.amount?`€${s.amount.toLocaleString()}${s.type==="borsa"?" totale":"/mese"}`:"Non specificato"],["📅 Scadenza",s.deadline||"Aperta"]].map(([l,v])=>(
+                          <div key={l} style={{background:"var(--cream)",borderRadius:8,padding:"10px 12px"}}>
+                            <div style={{fontSize:10,color:"var(--muted)",fontWeight:700,marginBottom:2}}>{l}</div>
+                            <div style={{fontSize:13,fontWeight:600,color:"var(--ink)"}}>{v}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{display:"flex",gap:10}}>
+                        <button className="btn btn-violet" style={{padding:"10px 20px",fontSize:13}} onClick={e=>{e.stopPropagation();onLoginOpen("register");}}>Candidati ora →</button>
+                        <button className="btn btn-outline" style={{padding:"10px 16px",fontSize:13}} onClick={e=>e.stopPropagation()}>❤ Salva</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div style={{textAlign:"right",flexShrink:0}}>
+                  {s.amount&&<div style={{fontSize:22,fontWeight:800,color:s.color}}>€{s.amount.toLocaleString()}<span style={{fontSize:11,color:"var(--muted)",fontWeight:400}}>{s.type==="borsa"?"\ntotale":"/mese"}</span></div>}
+                  {s.deadline&&<div style={{fontSize:11,color:"var(--coral)",fontWeight:700,marginTop:6}}>Scade {s.deadline}</div>}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Banner CTA */}
+        <div style={{marginTop:40,background:"linear-gradient(135deg,var(--ink) 0%,var(--ink2) 100%)",borderRadius:20,padding:"44px 48px",position:"relative",overflow:"hidden"}}>
+          <div style={{position:"absolute",top:-40,right:-40,width:200,height:200,borderRadius:"50%",background:"rgba(124,58,237,.15)"}}/>
+          <div style={{position:"absolute",bottom:-30,left:"40%",width:150,height:150,borderRadius:"50%",background:"rgba(8,145,178,.1)"}}/>
+          <div style={{position:"relative",zIndex:1}}>
+            <div className="pf" style={{fontSize:26,fontWeight:700,color:"#fff",marginBottom:10}}>Sei un'organizzazione?</div>
+            <p style={{color:"rgba(255,255,255,.55)",fontSize:14,marginBottom:22,maxWidth:480}}>Pubblica borse di studio, tirocini e fellowship. Raggiungi migliaia di candidati qualificati nel Terzo Settore.</p>
+            <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+              <button className="btn btn-gold" onClick={()=>onLoginOpen("register")} style={{padding:"12px 24px"}}>Pubblica un'opportunità →</button>
+              <button className="btn btn-outline-w" style={{padding:"11px 20px",fontSize:13}}>Scopri i piani</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MapPage() {
+  const [hov,setHov]=useState(null);
+  const [sel,setSel]=useState(null);
+  const regions=[["M160 90 L200 85 L220 100 L210 120 L180 125 L155 115 Z","Lombardia",12],["M100 95 L155 85 L160 90 L155 115 L120 130 L90 110 Z","Piemonte",6],["M90 135 L155 120 L165 135 L130 148 L90 145 Z","Liguria",3],["M130 155 L185 145 L195 175 L175 200 L140 195 L120 175 Z","Toscana",5],["M150 200 L195 195 L200 230 L170 250 L145 235 Z","Lazio",10],["M175 255 L215 245 L225 275 L200 295 L175 280 Z","Campania",8],["M150 340 L205 335 L215 360 L185 375 L150 365 Z","Sicilia",7],["M225 240 L260 235 L270 280 L245 305 L225 285 Z","Puglia",4],["M215 85 L255 80 L260 105 L235 115 L215 108 Z","Veneto",5],["M160 120 L220 115 L225 140 L175 150 L155 138 Z","Emilia-Romagna",6],["M215 305 L240 300 L240 345 L215 350 L210 330 Z","Calabria",2],["M90 255 L120 250 L125 300 L100 310 L82 290 Z","Sardegna",2]];
+  return (
+    <div style={{paddingTop:64,minHeight:"100vh",background:"var(--cream)"}}>
+      <SectionHeader label="DISTRIBUZIONE GEOGRAFICA" title="Mappa delle opportunità" sub="Ogni punto è un'offerta attiva. Le regioni più intense hanno più annunci disponibili."/>
+      <hr className="hr-gold"/>
+      <div style={{maxWidth:1100,margin:"0 auto",padding:"32px 40px 60px",display:"grid",gridTemplateColumns:"1fr 280px",gap:24}}>
+        <div className="card" style={{padding:24}}>
+          <svg viewBox="55 58 265 345" style={{width:"100%",maxHeight:520}}>
+            <rect x="55" y="58" width="265" height="345" fill="#dbeafe" rx="10"/>
+            {regions.map(([d,name,n])=>(
+              <path key={name} d={d} fill={`rgba(8,145,178,${.08+(.75*n/12)})`} stroke="rgba(255,255,255,.7)" strokeWidth=".9" style={{cursor:"pointer",transition:"fill .2s"}} onMouseEnter={()=>setHov(name)} onMouseLeave={()=>setHov(null)}/>
+            ))}
+            {JOBS.filter(j=>j.lat).map(j=>{
+              const x=(j.lng-6.5)*14,y=400-(j.lat-36)*15;
+              const c=SC[j.sector]||SC.default;
+              const isSel=sel?.id===j.id;
+              return (
+                <g key={j.id} onClick={()=>setSel(isSel?null:j)} style={{cursor:"pointer"}}>
+                  {isSel&&<circle cx={x} cy={y} r={14} fill={c} fillOpacity=".15"/>}
+                  <circle cx={x} cy={y} r={isSel?9:6} fill={c} stroke="#fff" strokeWidth={isSel?2.5:1.5} style={{animation:"pulse 1.5s ease-in-out infinite"}}/>
+                </g>
+              );
+            })}
+            {SCHOLARSHIPS.filter(s=>["Milano","Roma"].includes(s.city)).map((s,i)=>{
+              const coords={Milano:[9.19,45.46],Roma:[12.50,41.90]};
+              const co=coords[s.city];
+              if(!co)return null;
+              const x=(co[0]-6.5)*14+8,y=400-(co[1]-36)*15-8;
+              return <rect key={s.id} x={x} y={y} width="8" height="8" fill="var(--violet)" stroke="#fff" strokeWidth="1" rx="2" style={{cursor:"pointer"}}/>;
+            })}
+          </svg>
+          {hov&&<div style={{textAlign:"center",marginTop:10,fontSize:13,color:"var(--muted)",fontWeight:600}}>📍 {hov}</div>}
+          <div style={{display:"flex",gap:16,justifyContent:"center",marginTop:12,flexWrap:"wrap"}}>
+            <span style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:"var(--muted)"}}><span style={{width:10,height:10,borderRadius:"50%",background:"#7c3aed",display:"inline-block"}}/>Offerte lavoro</span>
+            <span style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:"var(--muted)"}}><span style={{width:8,height:8,background:"var(--violet)",display:"inline-block",borderRadius:2}}/>Borse/Tirocini</span>
+            <span style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:"var(--muted)"}}><span style={{width:10,height:10,borderRadius:"50%",background:"rgba(8,145,178,.4)",display:"inline-block"}}/>Intensità regionale</span>
+          </div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <div className="card" style={{padding:18}}>
+            <div style={{fontSize:11,fontWeight:800,color:"var(--gold)",letterSpacing:2,marginBottom:12}}>SETTORI</div>
+            {Object.entries(SC).filter(([k])=>k!=="default").slice(0,6).map(([s,c])=>(
+              <div key={s} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                <div style={{width:10,height:10,borderRadius:"50%",background:c,flexShrink:0}}/>
+                <span style={{fontSize:12,color:"var(--ink)",flex:1}}>{s}</span>
+                <span style={{fontSize:11,color:"var(--muted)",fontWeight:600}}>{JOBS.filter(j=>j.sector===s).length}</span>
+              </div>
+            ))}
+          </div>
+          {sel&&(
+            <div className="card" style={{padding:18,animation:"fadeIn .2s ease"}}>
+              <div style={{fontWeight:700,fontSize:13,color:"var(--ink)",marginBottom:3}}>{sel.title}</div>
+              <div style={{color:"var(--gold)",fontSize:12,marginBottom:8,fontWeight:600}}>{sel.org}</div>
+              <div style={{fontSize:12,color:"var(--muted)",marginBottom:12}}>📍 {sel.city} · {sel.contract}</div>
+              <button className="btn btn-gold" style={{width:"100%",justifyContent:"center",padding:9,fontSize:12}}>Vedi offerta →</button>
+            </div>
+          )}
+          <div className="card" style={{padding:18}}>
+            <div style={{fontSize:11,fontWeight:800,color:"var(--gold)",letterSpacing:2,marginBottom:12}}>TOP REGIONI</div>
+            {[["Lombardia",12],["Lazio",10],["Campania",8],["Sicilia",7],["Piemonte",6]].map(([r,n])=>(
+              <div key={r} style={{marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                  <span style={{fontSize:12,color:"var(--ink)"}}>{r}</span>
+                  <span style={{fontSize:11,color:"var(--gold)",fontWeight:700}}>{n}</span>
+                </div>
+                <div style={{height:3,background:"var(--cream2)",borderRadius:99}}>
+                  <div style={{height:"100%",width:`${(n/12)*100}%`,background:"linear-gradient(90deg,var(--teal),var(--teal2))",borderRadius:99}}/>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PrivacyPage() {
+  const [open,setOpen]=useState(null);
+  const sects=[
+    ["🇪🇺 GDPR — Reg. UE 2016/679","In vigore dal 25 maggio 2018. Solco.it rispetta: Art.5 (principi del trattamento), Art.6 (basi giuridiche), Art.13-14 (informativa), Art.17 (diritto all'oblio), Art.20 (portabilità dati), Art.25 (privacy by design), Art.32 (sicurezza), Art.33-34 (notifica violazioni entro 72 ore). Tutti gli interessati possono esercitare i propri diritti scrivendo a privacy@solco.it."],
+    ["🇮🇹 D.Lgs. 196/2003 — Codice Privacy","Aggiornato con D.Lgs. 101/2018 per adeguarsi al GDPR. Regola specificità italiane: art.111-bis (dati lavoratori), gestione CV e profili professionali, comunicazioni tra operatori del settore sociale e sanitario. Solco.it è conforme a tutte le disposizioni nazionali applicabili."],
+    ["📋 Dati raccolti e finalità","Raccogliamo: dati anagrafici, email, CV, preferenze lavorative, dati di navigazione. Finalità: erogazione servizi, matching offerte-profili, comunicazioni (solo con consenso esplicito). I dati NON vengono ceduti a terzi né usati per pubblicità profilata senza consenso."],
+    ["🔐 Sicurezza (Art. 32 GDPR)","Misure tecniche adottate: TLS/SSL per tutte le trasmissioni, cifratura dati a riposo, bcrypt+salt per password, accesso limitato al personale autorizzato, backup giornalieri cifrati, penetration test periodici, registro delle violazioni. In caso di data breach il Garante viene notificato entro 72 ore."],
+    ["✅ Diritti degli interessati (Artt. 15-22)","Hai diritto a: Accesso (Art.15) · Rettifica (Art.16) · Cancellazione/oblio (Art.17) · Limitazione (Art.18) · Portabilità (Art.20) · Opposizione (Art.21) · Revoca del consenso in qualsiasi momento. Richieste a: privacy@solco.it — risposta garantita entro 30 giorni."],
+    ["🍪 Cookie Policy","Cookie tecnici (necessari): nessun consenso richiesto. Cookie analitici anonimi: consenso tramite banner. Cookie profilazione: solo con consenso esplicito. Durata massima cookie non tecnici: 12 mesi. Puoi gestire le tue preferenze in qualsiasi momento dal pannello cookie nel footer."],
+    ["📞 Autorità di controllo","Garante per la protezione dei dati personali · www.garanteprivacy.it · Piazza Venezia 11, Roma · Tel. 06.69677.1. Puoi presentare reclamo al Garante ai sensi dell'Art. 77 GDPR se ritieni che il trattamento dei tuoi dati violi la normativa. Email DPO: privacy@solco.it"],
+  ];
+  return (
+    <div style={{paddingTop:64,minHeight:"100vh",background:"var(--cream)"}}>
+      <div style={{background:"var(--ink)",padding:"56px 40px 44px"}}>
+        <div style={{maxWidth:900,margin:"0 auto"}}>
+          <span className="sec-label" style={{color:"rgba(255,255,255,.4)"}}>NORMATIVA</span>
+          <h1 className="pf" style={{fontSize:44,fontWeight:900,color:"#fff",marginBottom:12}}>Privacy & Protezione Dati</h1>
+          <p style={{color:"rgba(255,255,255,.45)",fontSize:15,maxWidth:560,lineHeight:1.75}}>Conforme al <strong style={{color:"var(--gold)"}}>GDPR UE 2016/679</strong> e al <strong style={{color:"var(--gold)"}}>D.Lgs. 196/2003</strong> (mod. D.Lgs. 101/2018). La tutela dei tuoi dati è priorità assoluta.</p>
+          <div style={{display:"flex",gap:10,marginTop:20,flexWrap:"wrap"}}>
+            {["GDPR Compliant","Privacy by Design","Data Minimization","Diritto all'Oblio"].map(b=>(
+              <span key={b} className="pill" style={{background:"rgba(232,184,75,.1)",border:"1px solid rgba(232,184,75,.25)",color:"var(--gold)",fontSize:11}}>{b}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+      <hr className="hr-gold"/>
+      <div style={{maxWidth:900,margin:"0 auto",padding:"36px 40px 60px"}}>
+        <div style={{display:"grid",gap:10}}>
+          {sects.map(([t,c],i)=>(
+            <div key={i} className="card" style={{overflow:"hidden"}}>
+              <div onClick={()=>setOpen(open===i?null:i)} style={{padding:"18px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+                <div className="pf" style={{fontWeight:700,fontSize:15,color:"var(--ink)"}}>{t}</div>
+                <div style={{color:"var(--gold)",fontSize:22,fontWeight:200,transform:open===i?"rotate(45deg)":"none",transition:"transform .2s",flexShrink:0}}>+</div>
+              </div>
+              {open===i&&<div style={{padding:"0 24px 22px",animation:"fadeIn .2s ease"}}><hr className="hr-light" style={{marginBottom:16}}/><p style={{fontSize:14,color:"var(--muted)",lineHeight:1.85}}>{c}</p></div>}
+            </div>
+          ))}
+        </div>
+        <div style={{marginTop:28,background:"rgba(22,163,74,.05)",border:"1px solid rgba(22,163,74,.2)",borderRadius:12,padding:22,fontSize:13,color:"var(--ink)",lineHeight:1.8}}>
+          <strong style={{color:"var(--lime)"}}>📌 Ultima revisione: giugno 2026</strong> — In caso di modifiche sostanziali, gli utenti registrati saranno notificati via email con almeno 30 giorni di anticipo.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GuidaPage() {
+  return (
+    <div style={{paddingTop:64,minHeight:"100vh",background:"var(--cream)"}}>
+      <div style={{background:"var(--ink)",padding:"56px 40px 44px"}}>
+        <div style={{maxWidth:900,margin:"0 auto"}}>
+          <span className="sec-label" style={{color:"rgba(255,255,255,.4)"}}>GUIDA TECNICA & LEGALE</span>
+          <h1 className="pf" style={{fontSize:42,fontWeight:900,color:"#fff",marginBottom:10}}>Come pubblicare il sito & Partita IVA</h1>
+          <p style={{color:"rgba(255,255,255,.4)",fontSize:15,lineHeight:1.75}}>Dalla pubblicazione online alla questione fiscale: tutto spiegato in modo semplice.</p>
+        </div>
+      </div>
+      <hr className="hr-gold"/>
+      <div style={{maxWidth:900,margin:"0 auto",padding:"40px 40px 80px"}}>
+
+        <div style={{marginBottom:52}}>
+          <div className="pf" style={{fontSize:26,fontWeight:700,color:"var(--ink)",marginBottom:22}}>🌐 Come rendere il sito disponibile a tutti</div>
+          <div style={{display:"grid",gap:14}}>
+            {[
+              {n:"1",c:"var(--teal)",title:"Vercel — Raccomandato (gratuito)",items:["Vai su vercel.com e crea un account gratuito","Clicca 'Add New Project' e carica i file del sito","Vercel pubblica automaticamente su un indirizzo tipo: solco.vercel.app","SSL HTTPS incluso e gratuito","Aggiornamenti automatici ad ogni modifica","Tempo necessario: 10 minuti · Costo: ZERO"]},
+              {n:"2",c:"var(--violet)",title:"Netlify — Alternativa gratuita",items:["Vai su netlify.com e crea account","Trascina la cartella del progetto nel browser","Ottieni subito un link pubblico tipo: solco.netlify.app","100GB/mese di traffico gratuito","Supporta aggiornamenti automatici da GitHub"]},
+              {n:"3",c:"var(--gold)",title:"Dominio personalizzato (solco.it)",items:["Registra il dominio su Aruba.it (~3€/anno) o Register.it (~5€/anno)","Collega il dominio a Vercel in 5 minuti seguendo la guida inclusa","HTTPS gratuito attivato automaticamente (Let's Encrypt)","Alternative: solcolavoro.it · lavorosolco.it · solco.org","Costo totale dominio: 3-10€/anno"]},
+              {n:"4",c:"var(--lime)",title:"Backend & Database (quando il sito cresce)",items:["Supabase (gratis fino a 500MB): database PostgreSQL managed","Railway.app (gratis): per il backend Python FastAPI","Upstash Redis (gratis): per lo scheduler Celery automatico","Queste piattaforme si collegano con semplici variabili d'ambiente","Costo fase iniziale: ZERO fino a migliaia di utenti"]},
+            ].map(({n,c,title,items})=>(
+              <div key={n} className="card" style={{padding:26,borderLeft:`4px solid ${c}`}}>
+                <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
+                  <div style={{width:30,height:30,borderRadius:7,background:c,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:800,fontSize:13,flexShrink:0}}>{n}</div>
+                  <div className="pf" style={{fontSize:17,fontWeight:700,color:"var(--ink)"}}>{title}</div>
+                </div>
+                <ul style={{paddingLeft:20,display:"grid",gap:5}}>
+                  {items.map((it,i)=><li key={i} style={{fontSize:14,color:"var(--muted)",lineHeight:1.6}}>{it}</li>)}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{marginBottom:52}}>
+          <div className="pf" style={{fontSize:26,fontWeight:700,color:"var(--ink)",marginBottom:10}}>💼 Hai bisogno della Partita IVA?</div>
+          <p style={{fontSize:15,color:"var(--muted)",marginBottom:22,lineHeight:1.75}}>Risposta diretta: <strong style={{color:"var(--ink)"}}>dipende da quanto e come guadagni</strong>. Ecco la spiegazione completa:</p>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:22}}>
+            <div style={{background:"rgba(22,163,74,.05)",border:"1px solid rgba(22,163,74,.2)",borderRadius:12,padding:22}}>
+              <div style={{fontSize:22,marginBottom:8}}>✅</div>
+              <div className="pf" style={{fontSize:15,fontWeight:700,color:"var(--lime)",marginBottom:10}}>NON serve P.IVA se...</div>
+              <ul style={{paddingLeft:16,display:"grid",gap:7}}>
+                {["Il sito è completamente gratuito","Guadagni meno di €5.000/anno in modo occasionale","Lo fai come hobby o portfolio personale","Non hai pubblicità né abbonamenti attivi"].map((t,i)=><li key={i} style={{fontSize:13,color:"var(--muted)",lineHeight:1.6}}>{t}</li>)}
+              </ul>
+            </div>
+            <div style={{background:"rgba(255,107,107,.05)",border:"1px solid rgba(255,107,107,.18)",borderRadius:12,padding:22}}>
+              <div style={{fontSize:22,marginBottom:8}}>⚠️</div>
+              <div className="pf" style={{fontSize:15,fontWeight:700,color:"var(--coral)",marginBottom:10}}>SERVE P.IVA se...</div>
+              <ul style={{paddingLeft:16,display:"grid",gap:7}}>
+                {["Incassi abbonamenti Premium ricorrenti","Vendi piani Employer alle organizzazioni","Ricevi compensi da AdSense o affiliati","I guadagni diventano continuativi nel tempo","Superi €5.000 lordi in un anno"].map((t,i)=><li key={i} style={{fontSize:13,color:"var(--muted)",lineHeight:1.6}}>{t}</li>)}
+              </ul>
+            </div>
+          </div>
+          <div style={{display:"grid",gap:14}}>
+            {[
+              {c:"var(--teal)",title:"📋 Fase 1 — Inizia SENZA P.IVA (subito)",body:"Lancia il sito in versione gratuita. Non attivare ancora pagamenti. Costruisci la community e valida il progetto. Finché non incassi nulla in modo continuativo, non hai obblighi fiscali né costi da sostenere."},
+              {c:"var(--violet)",title:"📝 Fase 2 — Prestazione Occasionale (0–5.000€/anno)",body:"Se arrivano i primi compensi ma non in modo strutturato: emetti una 'ricevuta per prestazione occasionale' (senza P.IVA). Applica ritenuta d'acconto del 20% sulle fatture. Limite: €5.000 lordi/anno. Nessun costo di apertura, nessun commercialista necessario per iniziare."},
+              {c:"var(--gold)",title:"🏢 Fase 3 — Apri la P.IVA in Regime Forfettario",body:"Quando i guadagni diventano continuativi o superiori a €5.000/anno. Apertura P.IVA: ZERO costi (si fa online all'Agenzia delle Entrate gratuitamente). Tasse: 5% IRPEF nei primi 5 anni se è la tua prima attività, poi 15%. ATECO consigliato: 63.12.00 'Portali web'. Attenzione: i contributi INPS fissi (~€3.900/anno) sono il vero costo da pianificare."},
+              {c:"var(--lime)",title:"💡 Strategia consigliata per te",body:"Lancia gratis → aspetta 500+ utenti registrati → verifica che almeno 10 organizzazioni siano interessate a pagare → solo allora attiva i pagamenti e apri la P.IVA. Così eviti i costi fissi INPS finché il sito non genera abbastanza per coprirli. Prima di aprire la P.IVA, consulta un CAF o commercialista per la tua situazione specifica."},
+            ].map(({c,title,body})=>(
+              <div key={title} className="card" style={{padding:24,borderTop:`3px solid ${c}`}}>
+                <div className="pf" style={{fontSize:16,fontWeight:700,color:"var(--ink)",marginBottom:10}}>{title}</div>
+                <p style={{fontSize:14,color:"var(--muted)",lineHeight:1.8}}>{body}</p>
+              </div>
+            ))}
+          </div>
+          <div style={{marginTop:22,background:"rgba(232,184,75,.06)",border:"1px solid rgba(232,184,75,.22)",borderRadius:12,padding:22,fontSize:13,color:"var(--muted)",lineHeight:1.8}}>
+            <strong style={{color:"var(--gold)"}}>⚖ Disclaimer:</strong> Queste informazioni sono orientative e non sostituiscono una consulenza fiscale professionale. Prima di aprire una P.IVA o gestire entrate, consulta un commercialista o un CAF (spesso gratuito).
+          </div>
+        </div>
+
+        {/* Piano d'azione */}
+        <div style={{background:"var(--ink)",borderRadius:16,padding:32}}>
+          <div className="pf" style={{fontSize:22,fontWeight:700,color:"var(--gold)",marginBottom:22}}>✅ Piano d'azione — Cosa fare adesso</div>
+          <div style={{display:"grid",gap:10}}>
+            {[["1","Oggi","Crea account gratuito su Vercel (vercel.com)","var(--teal2)"],["2","Oggi","Registra solco.it su Aruba.it (~3€/anno)","var(--teal2)"],["3","Questa settimana","Pubblica il sito e condividilo con amici e colleghi del settore","var(--gold)"],["4","Mese 1–3","Costruisci la community SENZA monetizzare ancora","var(--gold)"],["5","500+ utenti","Valuta se e quando aprire la P.IVA e attivare i pagamenti","var(--coral)"],["6","Prima di incassare","Consulta un commercialista o CAF per la tua situazione","var(--violet2)"]].map(([n,quando,cosa,col])=>(
+              <div key={n} style={{display:"flex",gap:14,alignItems:"center",padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,.06)"}}>
+                <span style={{background:col,color:"var(--ink)",borderRadius:7,width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:12,flexShrink:0}}>{n}</span>
+                <div><div style={{fontSize:9,color:col,fontWeight:800,letterSpacing:1,marginBottom:2}}>{quando.toUpperCase()}</div><div style={{fontSize:14,color:"rgba(255,255,255,.75)"}}>{cosa}</div></div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AboutPage({onLoginOpen}) {
+  return (
+    <div style={{paddingTop:64,minHeight:"100vh",background:"var(--cream)"}}>
+      <div style={{background:"linear-gradient(135deg,var(--ink) 0%,var(--ink2) 50%,#0d2040 100%)",padding:"56px 40px 44px",position:"relative",overflow:"hidden"}}>
+        <div style={{position:"absolute",top:-80,right:-80,width:350,height:350,borderRadius:"50%",border:"70px solid rgba(232,184,75,.06)"}}/>
+        <div style={{position:"absolute",bottom:-60,left:"20%",width:250,height:250,borderRadius:"50%",background:"radial-gradient(circle,rgba(124,58,237,.08) 0%,transparent 70%)"}}/>
+        <div style={{maxWidth:1100,margin:"0 auto",position:"relative",zIndex:1,display:"flex",alignItems:"center",gap:28,flexWrap:"wrap"}}>
+          <Logo size={80} bg="rgba(232,184,75,.1)" gold="#e8b84b" text="#e8b84b"/>
+          <div>
+            <span className="sec-label" style={{color:"rgba(255,255,255,.4)"}}>CHI SIAMO</span>
+            <h1 className="pf" style={{fontSize:46,fontWeight:900,color:"#fff",marginBottom:8}}>Solco.it</h1>
+            <p style={{color:"rgba(255,255,255,.5)",fontSize:15,maxWidth:520,lineHeight:1.75}}>Il primo aggregatore intelligente di lavoro, borse e tirocini nel Terzo Settore italiano. Nati per connettere chi vuole fare del bene con le organizzazioni che ne hanno bisogno.</p>
+          </div>
+        </div>
+      </div>
+      <hr className="hr-gold"/>
+      <div style={{maxWidth:1100,margin:"0 auto",padding:"40px 40px 60px"}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:20,marginBottom:36}}>
+          {[["🤖","AI che legge per te","Claude AI visita 247 siti ogni mattina. Distingue annunci reali da contenuti editoriali ed estrae dati anche da PDF complessi.","var(--violet)"],
+            ["🗺","Il territorio al centro","Ogni offerta viene geocodificata. La mappa mostra dove c'è più domanda di lavoro e formazione sociale in Italia.","var(--teal)"],
+            ["🎓","Formazione & lavoro","Oltre alle offerte, raccogliamo borse di studio, tirocini e fellowship per chi vuole crescere nel settore.","var(--lime)"]].map(([ico,t,d,c])=>(
+            <div key={t} className="card" style={{padding:28,borderTop:`3px solid ${c}`}}>
+              <div style={{fontSize:36,marginBottom:14}}>{ico}</div>
+              <div className="pf" style={{fontSize:18,fontWeight:700,color:"var(--ink)",marginBottom:10}}>{t}</div>
+              <p style={{fontSize:13,color:"var(--muted)",lineHeight:1.75}}>{d}</p>
+            </div>
+          ))}
+        </div>
+        <div style={{background:"linear-gradient(135deg,var(--violet),var(--teal))",borderRadius:20,padding:"48px 48px",position:"relative",overflow:"hidden"}}>
+          <div style={{position:"absolute",top:-40,right:-40,width:200,height:200,borderRadius:"50%",background:"rgba(255,255,255,.08)"}}/>
+          <div style={{position:"absolute",bottom:-30,left:"35%",width:160,height:160,borderRadius:"50%",background:"rgba(255,255,255,.05)"}}/>
+          <div style={{position:"relative",zIndex:1}}>
+            <div className="pf" style={{fontSize:26,fontWeight:700,color:"#fff",marginBottom:10}}>Sei un'organizzazione del Terzo Settore?</div>
+            <p style={{color:"rgba(255,255,255,.7)",fontSize:15,marginBottom:22,maxWidth:520}}>Pubblica offerte, borse e tirocini. Raggiungi candidati qualificati. Primo mese gratuito per tutti gli enti del Terzo Settore.</p>
+            <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+              <button className="btn btn-gold" onClick={()=>onLoginOpen("register")} style={{padding:"13px 28px"}}>Registra la tua organizzazione →</button>
+              <button className="btn btn-outline-w" style={{padding:"12px 22px",fontSize:13}}>Scopri i piani e prezzi</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AuthModal({onClose,onLogin,mode:init="login"}) {
+  const [mode,setMode]=useState(init);
+  const [f,setF]=useState({name:"",email:"",password:"",confirm:"",city:"",availability:"qualsiasi",privacy:false,marketing:false});
+  const [err,setErr]=useState("");
+  const [loading,setLoading]=useState(false);
+  const upd=k=>e=>setF(p=>({...p,[k]:e.target.type==="checkbox"?e.target.checked:e.target.value}));
+  const submit=()=>{
+    setErr("");
+    if(mode==="login"){
+      if(!f.email||!f.password){setErr("Inserisci email e password.");return;}
+      if(f.email===ADMIN.email&&f.password===ADMIN.pass){onLogin({email:f.email,name:"Amministratore",role:"admin"});return;}
+      if(f.email&&f.password){onLogin({email:f.email,name:f.email.split("@")[0],role:"candidate"});return;}
+    } else {
+      if(!f.name||!f.email||!f.password){setErr("Compila tutti i campi obbligatori.");return;}
+      if(f.password!==f.confirm){setErr("Le password non coincidono.");return;}
+      if(f.password.length<8){setErr("Password: minimo 8 caratteri.");return;}
+      if(!f.privacy){setErr("Devi accettare la Privacy Policy per continuare.");return;}
+      setLoading(true);
+      setTimeout(()=>onLogin({email:f.email,name:f.name,city:f.city,role:"candidate"}),900);
+    }
+  };
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(10,22,40,.88)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(12px)"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={{background:"var(--white)",borderRadius:20,padding:"34px 30px",width:"100%",maxWidth:450,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 40px 80px rgba(10,22,40,.4)",animation:"fadeUp .3s ease"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <Logo size={34} gold="#e8b84b" text="#0a1628"/>
+            <div className="pf" style={{fontSize:18,fontWeight:700,color:"var(--ink)"}}>{mode==="login"?"Bentornato":"Unisciti a Solco"}</div>
+          </div>
+          <button onClick={onClose} style={{background:"var(--cream2)",border:"none",borderRadius:8,width:32,height:32,cursor:"pointer",color:"var(--muted)",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+        </div>
+        <div style={{display:"flex",background:"var(--cream2)",borderRadius:8,padding:3,marginBottom:20}}>
+          {[["login","Accedi"],["register","Registrati"]].map(([m,l])=>(
+            <button key={m} onClick={()=>{setMode(m);setErr("");}} style={{flex:1,padding:"9px",borderRadius:6,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,background:mode===m?"var(--gold)":"transparent",color:mode===m?"var(--ink)":"var(--muted)",transition:"all .15s"}}>{l}</button>
+          ))}
+        </div>
+        {err&&<div style={{background:"rgba(255,107,107,.07)",border:"1px solid rgba(255,107,107,.22)",borderRadius:8,padding:"10px 14px",marginBottom:14,color:"var(--coral)",fontSize:13}}>⚠ {err}</div>}
+        <div style={{display:"flex",flexDirection:"column",gap:11}}>
+          {mode==="register"&&<input className="inp" placeholder="Nome e Cognome *" value={f.name} onChange={upd("name")}/>}
+          <input className="inp" type="email" placeholder="Email *" value={f.email} onChange={upd("email")}/>
+          <input className="inp" type="password" placeholder="Password * (min. 8 caratteri)" value={f.password} onChange={upd("password")}/>
+          {mode==="register"&&<>
+            <input className="inp" type="password" placeholder="Conferma password *" value={f.confirm} onChange={upd("confirm")}/>
+            <input className="inp" placeholder="Città (opzionale)" value={f.city} onChange={upd("city")}/>
+            <select className="inp" value={f.availability} onChange={upd("availability")}>
+              <option value="qualsiasi">Disponibilità: Qualsiasi</option>
+              <option value="oss">OSS / Operatore Sanitario</option>
+              <option value="educatore">Educatore / Insegnante</option>
+              <option value="sostituzione">Sostituzione Maternità</option>
+              <option value="badante">Badante</option>
+              <option value="colf">Colf</option>
+              <option value="tirocinio">Tirocinio / Stage</option>
+              <option value="borsa">Borsa di studio</option>
+            </select>
+            <div style={{background:"var(--cream)",borderRadius:10,padding:"11px 14px",fontSize:12,color:"var(--muted)",lineHeight:1.7}}>🔒 <strong style={{color:"var(--ink)"}}>Consenso GDPR — Reg. UE 2016/679</strong></div>
+            <label style={{display:"flex",gap:10,cursor:"pointer",fontSize:12,color:"var(--ink)",lineHeight:1.6,alignItems:"flex-start"}}>
+              <input type="checkbox" checked={f.privacy} onChange={upd("privacy")} style={{marginTop:2,accentColor:"var(--gold)",width:"auto"}}/>
+              * Accetto la Privacy Policy e il trattamento dei dati ai sensi del GDPR UE 2016/679 e D.Lgs. 196/2003.
+            </label>
+            <label style={{display:"flex",gap:10,cursor:"pointer",fontSize:12,color:"var(--muted)",lineHeight:1.6,alignItems:"flex-start"}}>
+              <input type="checkbox" checked={f.marketing} onChange={upd("marketing")} style={{marginTop:2,accentColor:"var(--gold)",width:"auto"}}/>
+              Accetto comunicazioni marketing e newsletter (opzionale, revocabile).
+            </label>
+          </>}
+        </div>
+        {mode==="login"&&<div style={{marginTop:10,padding:"8px 12px",background:"var(--cream)",borderRadius:8,fontSize:12,color:"var(--muted)"}}>🔐 Admin: <code style={{color:"var(--gold)"}}>admin@solco.it</code> / <code style={{color:"var(--gold)"}}>Solco2026!</code></div>}
+        <button className="btn btn-gold" onClick={submit} style={{width:"100%",justifyContent:"center",marginTop:18,padding:14,fontSize:15,opacity:loading?.7:1}}>
+          {loading?"Creazione account...":mode==="login"?"Accedi →":"Crea il tuo account →"}
+        </button>
+        {mode==="register"&&<div style={{marginTop:10,fontSize:11,color:"var(--muted)",textAlign:"center",lineHeight:1.6}}>I tuoi dati sono protetti e non vengono ceduti a terzi.</div>}
+      </div>
+    </div>
+  );
+}
+
+function ProfilePage({user,onToast}) {
+  const [cv,setCv]=useState(null);
+  const [avail,setAvail]=useState([]);
+  return (
+    <div style={{paddingTop:64,minHeight:"100vh",background:"var(--cream)"}}>
+      <div style={{background:"var(--ink)",padding:"48px 40px 40px"}}>
+        <div style={{maxWidth:900,margin:"0 auto",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:16}}>
+          <div>
+            <span className="sec-label" style={{color:"rgba(255,255,255,.4)"}}>AREA PERSONALE</span>
+            <h1 className="pf" style={{fontSize:38,fontWeight:900,color:"#fff"}}>Ciao, {user.name.split(" ")[0]} 👋</h1>
+            <div style={{color:"rgba(255,255,255,.35)",fontSize:13,marginTop:4}}>{user.email}</div>
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            <span className="pill" style={{background:"rgba(232,184,75,.12)",border:"1px solid rgba(232,184,75,.28)",color:"var(--gold)"}}>PIANO FREE</span>
+            <button className="btn btn-gold" style={{padding:"9px 18px",fontSize:13}}>⭐ Premium €4,99/mese</button>
+          </div>
+        </div>
+      </div>
+      <hr className="hr-gold"/>
+      <div style={{maxWidth:900,margin:"0 auto",padding:"32px 40px 60px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
+        <div className="card" style={{padding:28,gridColumn:"1/-1"}}>
+          <div className="pf" style={{fontSize:17,fontWeight:700,color:"var(--ink)",marginBottom:16}}>Piano attivo: Free</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:16}}>
+            {[["✅","Offerte illimitate",""],["✅","Mappa interattiva",""],["✅","Borse & tirocini",""],["❌","Alert in tempo reale","Solo Premium"],["❌","Matching AI con CV","Solo Premium"],["❌","Visibilità employer","Solo Premium"]].map(([ico,f,note])=>(
+              <div key={f} style={{background:"var(--cream)",borderRadius:8,padding:"10px 12px"}}>
+                <div style={{fontSize:18,marginBottom:4}}>{ico}</div>
+                <div style={{fontSize:12,fontWeight:600,color:"var(--ink)"}}>{f}</div>
+                {note&&<div style={{fontSize:10,color:"var(--muted)",marginTop:2}}>{note}</div>}
+              </div>
+            ))}
+          </div>
+          <div style={{background:"rgba(232,184,75,.06)",border:"1px solid rgba(232,184,75,.2)",borderRadius:10,padding:"12px 16px",fontSize:13,color:"var(--ink)"}}>
+            Con <strong style={{color:"var(--gold)"}}>Premium (€4,99/mese)</strong>: alert email per nuove offerte, matching AI con il tuo CV, visibilità alle organizzazioni, statistiche profilo.
+          </div>
+        </div>
+        <div className="card" style={{padding:28}}>
+          <div className="pf" style={{fontSize:17,fontWeight:700,color:"var(--ink)",marginBottom:18}}>📄 Il tuo CV</div>
+          {cv?<div style={{background:"rgba(22,163,74,.07)",border:"1px solid rgba(22,163,74,.2)",borderRadius:8,padding:"12px 14px",marginBottom:14}}><div style={{fontWeight:600,color:"var(--lime)",fontSize:13}}>✅ {cv}</div><div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>Caricato oggi · Visibile alle organizzazioni</div></div>
+          :<div style={{border:"2px dashed var(--border)",borderRadius:10,padding:28,textAlign:"center",marginBottom:14,background:"var(--cream)"}}>
+            <div style={{fontSize:36,marginBottom:8}}>📤</div>
+            <div style={{fontWeight:600,color:"var(--ink)",fontSize:14,marginBottom:4}}>Carica il tuo CV</div>
+            <div style={{fontSize:12,color:"var(--muted)"}}>PDF, DOC, DOCX — max 5MB</div>
+          </div>}
+          <input type="file" id="cvup" style={{display:"none"}} accept=".pdf,.doc,.docx" onChange={e=>{if(e.target.files[0]){setCv(e.target.files[0].name);onToast("CV caricato con successo!");}}}/>
+          <label htmlFor="cvup" className="btn btn-outline" style={{width:"100%",justifyContent:"center",padding:12,cursor:"pointer"}}>{cv?"Sostituisci CV":"Scegli file"}</label>
+        </div>
+        <div className="card" style={{padding:28}}>
+          <div className="pf" style={{fontSize:17,fontWeight:700,color:"var(--ink)",marginBottom:8}}>🎯 La tua disponibilità</div>
+          <p style={{fontSize:13,color:"var(--muted)",marginBottom:14,lineHeight:1.6}}>Indica per cosa sei disponibile — le organizzazioni ti trovano per ricerche mirate.</p>
+          {[["👩‍⚕️","OSS / Infermiere","oss"],["📚","Educatore","educatore"],["🏠","Badante","badante"],["🧹","Colf","colf"],["👶","Sostituzione maternità","sostituzione"],["🔬","Tirocinio","tirocinio"],["🏅","Borsa di studio","borsa"]].map(([ico,l,v])=>(
+            <label key={v} style={{display:"flex",alignItems:"center",gap:9,marginBottom:8,cursor:"pointer",padding:"7px 10px",borderRadius:8,background:avail.includes(v)?"rgba(232,184,75,.07)":"transparent",border:`1px solid ${avail.includes(v)?"rgba(232,184,75,.28)":"transparent"}`,transition:"all .15s"}}>
+              <input type="checkbox" checked={avail.includes(v)} onChange={()=>setAvail(a=>a.includes(v)?a.filter(x=>x!==v):[...a,v])} style={{accentColor:"var(--gold)",width:"auto"}}/>
+              <span style={{fontSize:13,color:"var(--ink)"}}>{ico} {l}</span>
+            </label>
+          ))}
+          <button className="btn btn-gold" onClick={()=>onToast("Preferenze salvate!")} style={{width:"100%",justifyContent:"center",padding:11,marginTop:8}}>Salva preferenze</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function HowItWorks({setPage}) {
+  return (
+    <section style={{background:"var(--cream2)",padding:"80px 40px"}}>
+      <div style={{maxWidth:1100,margin:"0 auto"}}>
+        <div style={{textAlign:"center",marginBottom:52}}>
+          <span className="sec-label" style={{color:"var(--gold)"}}>COME FUNZIONA</span>
+          <h2 className="pf" style={{fontSize:38,fontWeight:700,color:"var(--ink)",marginBottom:12}}>Intelligenza al servizio del sociale</h2>
+          <p style={{color:"var(--muted)",fontSize:15,maxWidth:520,margin:"0 auto",lineHeight:1.7}}>Tre passi semplici per trovare lavoro, borse e tirocini nel Terzo Settore italiano.</p>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:24,marginBottom:48}}>
+          {[
+            {n:"01",ico:"🤖",c:"var(--violet)",t:"AI che legge per te",d:"Claude AI visita ogni mattina alle 06:00 i siti di 247 organizzazioni. Distingue automaticamente un vero annuncio da un articolo di blog. Estrae i dati anche da PDF complessi e poco chiari."},
+            {n:"02",ico:"🗺",c:"var(--teal)",t:"Tutto sulla mappa",d:"Ogni offerta e borsa viene geocodificata e visualizzata sulla mappa dell'Italia. Vedi subito dove c'è più domanda di lavoro sociale nella tua regione."},
+            {n:"03",ico:"🔔",c:"var(--lime)",t:"Avvisato in tempo reale",d:"Registrati, carica il CV e indica la tua disponibilità. Il sistema ti avvisa appena arriva un'offerta o una borsa compatibile con il tuo profilo."},
+          ].map(({n,ico,c,t,d})=>(
+            <div key={n} className="card" style={{padding:32,position:"relative",overflow:"hidden"}}>
+              <div style={{position:"absolute",top:-10,right:-10,fontSize:80,fontWeight:900,color:`${c}08`,fontFamily:"Georgia,serif",lineHeight:1}}>{n}</div>
+              <div style={{width:52,height:52,borderRadius:14,background:`${c}15`,border:`2px solid ${c}25`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,marginBottom:18}}>{ico}</div>
+              <div className="pf" style={{fontSize:20,fontWeight:700,color:"var(--ink)",marginBottom:10}}>{t}</div>
+              <p style={{fontSize:14,color:"var(--muted)",lineHeight:1.75}}>{d}</p>
+            </div>
+          ))}
+        </div>
+        <div style={{background:"var(--ink)",borderRadius:20,padding:"40px 48px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:24}}>
+          <div>
+            <div className="pf" style={{fontSize:24,fontWeight:700,color:"#fff",marginBottom:6}}>Pronto a trovare la tua opportunità?</div>
+            <p style={{color:"rgba(255,255,255,.45)",fontSize:14}}>Lavoro, borse di studio e tirocini nel Terzo Settore italiano — tutto gratis.</p>
+          </div>
+          <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+            <button className="btn btn-gold" onClick={()=>setPage("jobs")} style={{padding:"13px 28px"}}>Cerca lavoro →</button>
+            <button className="btn btn-violet" onClick={()=>setPage("scholarships")} style={{padding:"12px 24px"}}>🎓 Borse & Tirocini</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function AdminPage({user,onToast}) {
+  const [tab,setTab]=useState("dashboard");
+  const [jobs,setJobs]=useState(JOBS);
+  const [scholarships,setScholarships]=useState(SCHOLARSHIPS);
+  const [f,setF]=useState({title:"",org:"",city:"",region:"",sector:"Sociale",contract:"Tempo Determinato",type:"cooperativa",salary_min:"",salary_max:"",deadline:"",desc:"",featured:false,isScholarship:false,amount:"",scholarshipType:"tirocinio",level:""});
+  const upd=k=>e=>setF(p=>({...p,[k]:e.target.type==="checkbox"?e.target.checked:e.target.value}));
+  const addItem=()=>{
+    if(!f.title||!f.org){onToast("Titolo e organizzazione obbligatori.");return;}
+    if(f.isScholarship){setScholarships(p=>[{...f,id:"s"+Date.now(),type:f.scholarshipType,color:"var(--violet)"},...p]);}
+    else{setJobs(p=>[{...f,id:"j"+Date.now(),lat:null,lng:null},...p]);}
+    onToast(f.isScholarship?"Borsa/tirocinio aggiunto!":"Offerta aggiunta!");
+  };
+  const tabs=[["dashboard","📊 Dashboard"],["jobs","💼 Offerte"],["scholarships","🎓 Borse"],["add","➕ Aggiungi"],["users","👥 Utenti"],["seo","🔍 SEO"],["settings","⚙ Impostazioni"]];
+  return (
+    <div style={{paddingTop:64,minHeight:"100vh",background:"var(--cream)"}}>
+      <div style={{background:"var(--ink)",padding:"40px 40px 32px"}}>
+        <div style={{maxWidth:1200,margin:"0 auto",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:14}}>
+          <div style={{display:"flex",alignItems:"center",gap:14}}>
+            <Logo size={48} bg="rgba(232,184,75,.1)" gold="#e8b84b" text="#e8b84b"/>
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <h1 className="pf" style={{fontSize:24,fontWeight:700,color:"#fff"}}>Pannello Admin</h1>
+                <span style={{background:"linear-gradient(135deg,var(--gold),var(--gold2))",color:"var(--ink)",borderRadius:99,padding:"2px 12px",fontSize:10,fontWeight:800,letterSpacing:1}}>ADMIN</span>
+              </div>
+              <div style={{color:"rgba(255,255,255,.3)",fontSize:12,marginTop:2}}>{user.email}</div>
+            </div>
+          </div>
+          <div style={{background:"rgba(232,184,75,.07)",border:"1px solid rgba(232,184,75,.18)",borderRadius:10,padding:"10px 16px",fontSize:12}}>
+            <span style={{color:"rgba(255,255,255,.4)"}}>Credenziali: </span>
+            <code style={{color:"var(--gold)"}}>admin@solco.it</code>
+            <span style={{color:"rgba(255,255,255,.25)",margin:"0 6px"}}>/</span>
+            <code style={{color:"var(--gold)"}}>Solco2026!</code>
+            <span style={{color:"rgba(255,255,255,.25)",marginLeft:8,fontSize:11}}>⚠ Cambia in produzione</span>
+          </div>
+        </div>
+      </div>
+      <hr className="hr-gold"/>
+      <div style={{maxWidth:1200,margin:"0 auto",padding:"24px 40px 60px"}}>
+        <div style={{display:"flex",gap:4,marginBottom:24,background:"var(--white)",padding:4,borderRadius:10,width:"fit-content",border:"1px solid var(--border)"}}>
+          {tabs.map(([t,l])=>(
+            <button key={t} onClick={()=>setTab(t)} className="btn" style={{padding:"8px 16px",fontSize:13,background:tab===t?"var(--gold)":"transparent",color:tab===t?"var(--ink)":"var(--muted)",fontWeight:tab===t?700:500,borderRadius:7}}>
+              {l}
+            </button>
+          ))}
+        </div>
+
+        {tab==="dashboard"&&(
+          <div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:14,marginBottom:24}}>
+              {[["💼",jobs.length,"Offerte","var(--gold)"],["🎓",scholarships.length,"Borse/Tirocini","var(--violet2)"],["🏢",new Set([...jobs,...scholarships].map(j=>j.org)).size,"Organizzazioni","var(--teal2)"],["⭐",jobs.filter(j=>j.featured).length,"In evidenza","var(--coral)"],["👥",128,"Utenti registrati","var(--lime2)"]].map(([ico,val,lbl,col])=>(
+                <div key={lbl} className="card" style={{padding:"18px 20px",textAlign:"center"}}>
+                  <div style={{fontSize:20,marginBottom:6}}>{ico}</div>
+                  <div className="pf" style={{fontSize:30,fontWeight:700,color:col,lineHeight:1}}>{val}</div>
+                  <div style={{fontSize:11,color:"var(--muted)",marginTop:3}}>{lbl}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:20}}>
+              <div className="card" style={{padding:24}}>
+                <div className="pf" style={{fontWeight:700,fontSize:15,color:"var(--ink)",marginBottom:14}}>Offerte recenti</div>
+                {jobs.slice(0,5).map(j=>(
+                  <div key={j.id} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:"1px solid var(--border)"}}>
+                    <div><div style={{fontSize:13,fontWeight:600,color:"var(--ink)"}}>{j.title}</div><div style={{fontSize:11,color:"var(--muted)"}}>{j.org} · {j.city||"—"}</div></div>
+                    <span className="tag" style={{background:`${SC[j.sector]||"#888"}12`,color:SC[j.sector]||"#888",border:`1px solid ${SC[j.sector]||"#888"}20`,fontSize:10,alignSelf:"center"}}>{j.sector}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="card" style={{padding:24}}>
+                <div className="pf" style={{fontWeight:700,fontSize:15,color:"var(--ink)",marginBottom:14}}>Scraper AI</div>
+                {[["Ultimo run","Oggi 06:00"],["Prossimo","Domani 06:00"],["URL monitorati","247"],["PDF analizzati","38"],["Nuove offerte","12"],["Confidenza AI","87%"]].map(([l,v])=>(
+                  <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:"1px solid var(--border)"}}>
+                    <span style={{fontSize:12,color:"var(--muted)"}}>{l}</span>
+                    <span style={{fontSize:12,color:"var(--ink)",fontWeight:600}}>{v}</span>
+                  </div>
+                ))}
+                <button className="btn btn-gold" onClick={()=>onToast("Scraping avviato!")} style={{width:"100%",justifyContent:"center",marginTop:14,padding:10,fontSize:12}}>▶ Avvia scraping ora</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab==="jobs"&&(
+          <div style={{display:"grid",gap:10}}>
+            {jobs.map(j=>(
+              <div key={j.id} className="card" style={{padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:3}}>
+                    <span style={{fontWeight:700,fontSize:13,color:"var(--ink)"}}>{j.title}</span>
+                    {j.featured&&<span className="tag" style={{background:"rgba(232,184,75,.1)",color:"var(--gold)",border:"1px solid rgba(232,184,75,.2)",fontSize:9}}>★</span>}
+                  </div>
+                  <div style={{fontSize:11,color:"var(--muted)"}}>{j.org} · {j.city||"—"} · {j.sector}</div>
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>{setJobs(p=>p.map(x=>x.id===j.id?{...x,featured:!x.featured}:x));onToast(j.featured?"Rimossa da evidenza":"Messa in evidenza!");}} style={{background:"rgba(232,184,75,.08)",border:"1px solid rgba(232,184,75,.2)",borderRadius:6,padding:"6px 12px",color:"var(--gold)",fontSize:12,cursor:"pointer"}}>{j.featured?"★ Rimuovi":"★ Evidenza"}</button>
+                  <button onClick={()=>{setJobs(p=>p.filter(x=>x.id!==j.id));onToast("Offerta eliminata.");}} style={{background:"rgba(255,107,107,.06)",border:"1px solid rgba(255,107,107,.2)",borderRadius:6,padding:"6px 12px",color:"var(--coral)",fontSize:12,cursor:"pointer"}}>🗑 Elimina</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {tab==="scholarships"&&(
+          <div style={{display:"grid",gap:10}}>
+            {scholarships.map(s=>(
+              <div key={s.id} className="card" style={{padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",borderLeft:`4px solid ${s.color}`}}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:13,color:"var(--ink)",marginBottom:3}}>{s.title}</div>
+                  <div style={{fontSize:11,color:"var(--muted)"}}>{s.org} · {s.type} · {s.city||"—"} {s.amount?`· €${s.amount.toLocaleString()}`:""}</div>
+                </div>
+                <button onClick={()=>{setScholarships(p=>p.filter(x=>x.id!==s.id));onToast("Rimossa!");}} style={{background:"rgba(255,107,107,.06)",border:"1px solid rgba(255,107,107,.2)",borderRadius:6,padding:"6px 12px",color:"var(--coral)",fontSize:12,cursor:"pointer"}}>🗑 Elimina</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {tab==="add"&&(
+          <div className="card" style={{padding:32,maxWidth:760}}>
+            <div className="pf" style={{fontSize:20,fontWeight:700,color:"var(--ink)",marginBottom:18}}>Aggiungi nuova voce</div>
+            <div style={{display:"flex",gap:8,marginBottom:20}}>
+              {[["💼 Offerta di lavoro",false],["🎓 Borsa / Tirocinio",true]].map(([l,v])=>(
+                <button key={l} onClick={()=>setF(p=>({...p,isScholarship:v}))} className="btn" style={{padding:"9px 18px",fontSize:13,background:f.isScholarship===v?"var(--violet)":"var(--white)",color:f.isScholarship===v?"#fff":"var(--muted)",border:`1.5px solid ${f.isScholarship===v?"var(--violet)":"var(--border)"}`}}>{l}</button>
+              ))}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+              {[["Titolo posizione *","title","text",true],["Organizzazione *","org","text",true],["Città","city","text",false],["Regione","region","text",false]].map(([l,k,t,full])=>(
+                <div key={k} style={full?{gridColumn:"1/-1"}:{}}>
+                  <label style={{display:"block",fontSize:11,color:"var(--muted)",fontWeight:700,letterSpacing:.5,marginBottom:5}}>{l.toUpperCase()}</label>
+                  <input className="inp" type={t} value={f[k]} onChange={upd(k)} placeholder={l}/>
+                </div>
+              ))}
+              {f.isScholarship?(
+                <>
+                  <div><label style={{display:"block",fontSize:11,color:"var(--muted)",fontWeight:700,letterSpacing:.5,marginBottom:5}}>TIPO</label>
+                  <select className="inp" value={f.scholarshipType} onChange={upd("scholarshipType")}>{["tirocinio","borsa","fellowship"].map(o=><option key={o}>{o}</option>)}</select></div>
+                  <div><label style={{display:"block",fontSize:11,color:"var(--muted)",fontWeight:700,letterSpacing:.5,marginBottom:5}}>LIVELLO</label>
+                  <input className="inp" value={f.level} onChange={upd("level")} placeholder="es. Laurea magistrale"/></div>
+                  <div><label style={{display:"block",fontSize:11,color:"var(--muted)",fontWeight:700,letterSpacing:.5,marginBottom:5}}>IMPORTO (€)</label>
+                  <input className="inp" type="number" value={f.amount} onChange={upd("amount")} placeholder="es. 8000"/></div>
+                </>
+              ):(
+                <>
+                  <div><label style={{display:"block",fontSize:11,color:"var(--muted)",fontWeight:700,letterSpacing:.5,marginBottom:5}}>SETTORE</label>
+                  <select className="inp" value={f.sector} onChange={upd("sector")}>{["Sociale","Sanitario","Educativo","Assistenza","Tecnico","Comunicazione"].map(o=><option key={o}>{o}</option>)}</select></div>
+                  <div><label style={{display:"block",fontSize:11,color:"var(--muted)",fontWeight:700,letterSpacing:.5,marginBottom:5}}>TIPO CONTRATTO</label>
+                  <select className="inp" value={f.contract} onChange={upd("contract")}>{["Tempo Determinato","Tempo Indeterminato","Part-time","Sostituzione","Volontariato"].map(o=><option key={o}>{o}</option>)}</select></div>
+                  <div><label style={{display:"block",fontSize:11,color:"var(--muted)",fontWeight:700,letterSpacing:.5,marginBottom:5}}>TIPO ORGANIZZAZIONE</label>
+                  <select className="inp" value={f.type} onChange={upd("type")}>{["cooperativa","onlus","fondazione","ong","privato"].map(o=><option key={o}>{o}</option>)}</select></div>
+                  <div><label style={{display:"block",fontSize:11,color:"var(--muted)",fontWeight:700,letterSpacing:.5,marginBottom:5}}>STIPENDIO MIN (€)</label>
+                  <input className="inp" type="number" value={f.salary_min} onChange={upd("salary_min")} placeholder="es. 1400"/></div>
+                  <div><label style={{display:"block",fontSize:11,color:"var(--muted)",fontWeight:700,letterSpacing:.5,marginBottom:5}}>STIPENDIO MAX (€)</label>
+                  <input className="inp" type="number" value={f.salary_max} onChange={upd("salary_max")} placeholder="es. 1700"/></div>
+                </>
+              )}
+              <div style={{gridColumn:"1/-1"}}><label style={{display:"block",fontSize:11,color:"var(--muted)",fontWeight:700,letterSpacing:.5,marginBottom:5}}>SCADENZA</label>
+              <input className="inp" type="date" value={f.deadline} onChange={upd("deadline")}/></div>
+              <div style={{gridColumn:"1/-1"}}><label style={{display:"block",fontSize:11,color:"var(--muted)",fontWeight:700,letterSpacing:.5,marginBottom:5}}>DESCRIZIONE</label>
+              <textarea className="inp" value={f.desc} onChange={upd("desc")} rows={3} placeholder="Descrizione della posizione o opportunità..." style={{resize:"vertical"}}/></div>
+              <div style={{gridColumn:"1/-1",display:"flex",alignItems:"center",gap:10}}>
+                <input type="checkbox" id="feat" checked={f.featured} onChange={upd("featured")} style={{accentColor:"var(--gold)",width:"auto"}}/>
+                <label htmlFor="feat" style={{fontSize:13,color:"var(--ink)",cursor:"pointer"}}>⭐ Metti in evidenza (annuncio sponsorizzato)</label>
+              </div>
+            </div>
+            <button className="btn btn-gold" onClick={addItem} style={{marginTop:22,padding:"13px 28px",fontSize:14}}>➕ Aggiungi voce</button>
+          </div>
+        )}
+
+        {tab==="users"&&(
+          <div className="card" style={{padding:24}}>
+            <div className="pf" style={{fontSize:18,fontWeight:700,color:"var(--ink)",marginBottom:18}}>Utenti registrati</div>
+            {[{name:"Mario Rossi",email:"mario@email.it",plan:"premium",role:"candidate",joined:"10/05/2026",city:"Milano"},
+              {name:"Cooperativa Aurora Srl",email:"hr@aurora.it",plan:"employer_pro",role:"employer",joined:"22/04/2026",city:"Milano"},
+              {name:"Fondazione Crescere",email:"info@fondazione.it",plan:"employer_basic",role:"employer",joined:"03/03/2026",city:"Bologna"},
+              {name:"Amministratore",email:"admin@solco.it",plan:"admin",role:"admin",joined:"01/01/2026",city:"—"}].map(u=>(
+              <div key={u.email} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 0",borderBottom:"1px solid var(--border)"}}>
+                <div><div style={{fontWeight:600,fontSize:14,color:"var(--ink)"}}>{u.name}</div><div style={{fontSize:11,color:"var(--muted)"}}>{u.email} · {u.city} · iscritto {u.joined}</div></div>
+                <div style={{display:"flex",gap:8}}>
+                  <span className="tag" style={{background:"rgba(232,184,75,.1)",color:"var(--gold)",border:"1px solid rgba(232,184,75,.2)"}}>{u.plan}</span>
+                  <span className="tag" style={{background:"rgba(22,163,74,.07)",color:"var(--lime)",border:"1px solid rgba(22,163,74,.18)"}}>{u.role}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {tab==="seo"&&<SEOPanel jobs={jobs} scholarships={scholarships}/>}
+
+        {tab==="settings"&&(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20,maxWidth:800}}>
+            <div className="card" style={{padding:26}}>
+              <div className="pf" style={{fontWeight:700,fontSize:15,color:"var(--ink)",marginBottom:18}}>🔐 Cambia password admin</div>
+              {["Vecchia password","Nuova password","Conferma nuova password"].map(p=>(
+                <div key={p} style={{marginBottom:12}}>
+                  <label style={{display:"block",fontSize:11,color:"var(--muted)",fontWeight:700,marginBottom:5}}>{p.toUpperCase()}</label>
+                  <input className="inp" type="password" placeholder={p}/>
+                </div>
+              ))}
+              <button className="btn btn-gold" onClick={()=>onToast("Password aggiornata!")} style={{width:"100%",justifyContent:"center",padding:11}}>Aggiorna password</button>
+            </div>
+            <div className="card" style={{padding:26}}>
+              <div className="pf" style={{fontWeight:700,fontSize:15,color:"var(--ink)",marginBottom:18}}>⚙ Configurazione Scraper AI</div>
+              {[["Orario scraping giornaliero","06:00"],["Pausa tra richieste","2 secondi"],["Max PDF per sito","5"],["Soglia confidenza AI","0.6"],["Timeout HTTP","30 sec"]].map(([l,v])=>(
+                <div key={l} style={{marginBottom:12}}>
+                  <label style={{display:"block",fontSize:11,color:"var(--muted)",fontWeight:700,marginBottom:5}}>{l.toUpperCase()}</label>
+                  <input className="inp" defaultValue={v}/>
+                </div>
+              ))}
+              <button className="btn btn-teal" onClick={()=>onToast("Configurazione salvata!")} style={{width:"100%",justifyContent:"center",padding:11}}>Salva configurazione</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Footer({setPage}) {
+  return (
+    <footer style={{background:"var(--ink)",padding:"52px 40px 28px",marginTop:60}}>
+      <div style={{maxWidth:1200,margin:"0 auto"}}>
+        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr",gap:40,marginBottom:44}}>
+          <div>
+            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+              <Logo size={44} bg="rgba(232,184,75,.1)" gold="#e8b84b" text="#e8b84b"/>
+              <div>
+                <div className="pf" style={{color:"#fff",fontWeight:700,fontSize:16,letterSpacing:2}}>SOLCO.IT</div>
+                <div style={{color:"rgba(255,255,255,.2)",fontSize:9,letterSpacing:2,marginTop:1}}>EST. 2026</div>
+              </div>
+            </div>
+            <p style={{fontSize:13,color:"rgba(255,255,255,.3)",lineHeight:1.85,maxWidth:260}}>Aggregatore di lavoro, borse e tirocini nel Terzo Settore italiano. Offerte da fonti pubbliche, reindirizzate ai siti originali degli enti.</p>
+            <div style={{display:"flex",gap:8,marginTop:16}}>
+              {[["L","LinkedIn"],["F","Facebook"],["I","Instagram"]].map(([abbr,name])=>(
+                <div key={name} title={name} style={{width:32,height:32,borderRadius:8,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.07)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:12,color:"rgba(255,255,255,.35)",fontWeight:700,transition:"all .2s"}}
+                  onMouseEnter={e=>e.currentTarget.style.background="rgba(232,184,75,.15)"}
+                  onMouseLeave={e=>e.currentTarget.style.background="rgba(255,255,255,.06)"}>{abbr}</div>
+              ))}
+            </div>
+          </div>
+          {[
+            ["Piattaforma",[["Offerte di lavoro","jobs"],["Borse & Tirocini","scholarships"],["Mappa Italia","map"],["Chi siamo","about"]]],
+            ["Per Organizzazioni",[["Pubblica offerte","about"],["Piani employer","about"],["API access","about"],["Contatti","about"]]],
+            ["Risorse",[["Guida & P.IVA","guida"],["Come pubblicare","guida"],["Blog","about"],["Newsletter","about"]]],
+            ["Legale",[["Privacy & GDPR","privacy"],["Cookie Policy","privacy"],["Termini di servizio","privacy"],["Garante Privacy","privacy"]]],
+          ].map(([t,links])=>(
+            <div key={t}>
+              <div style={{fontSize:10,fontWeight:800,color:"var(--gold)",letterSpacing:2.5,marginBottom:14}}>{t.toUpperCase()}</div>
+              {links.map(([l,p])=>(
+                <div key={l} onClick={()=>setPage(p)} style={{fontSize:13,color:"rgba(255,255,255,.3)",marginBottom:10,cursor:"pointer",transition:"color .2s"}}
+                  onMouseEnter={e=>e.target.style.color="#fff"}
+                  onMouseLeave={e=>e.target.style.color="rgba(255,255,255,.3)"}>{l}</div>
+              ))}
+            </div>
+          ))}
+        </div>
+        <hr className="hr-gold"/>
+        <div style={{maxWidth:1200,marginTop:24,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+          <div style={{fontSize:12,color:"rgba(255,255,255,.18)"}}>© 2026 Solco.it — Fatto con ♥ per il Terzo Settore italiano</div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {[["GDPR Compliant","var(--teal)"],["Privacy by Design","var(--violet)"],["Dati Protetti","var(--lime)"]].map(([l,c])=>(
+              <span key={l} style={{fontSize:10,fontWeight:700,color:c,background:`${c}15`,border:`1px solid ${c}30`,borderRadius:99,padding:"3px 10px"}}>{l}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </footer>
+  );
+}
+
+export default function SolcoWebsite() {
+  const [page,setPage]=useState("home");
+  const [user,setUser]=useState(null);
+  const [showAuth,setShowAuth]=useState(false);
+  const [authMode,setAuthMode]=useState("login");
+  const [toast,setToast]=useState(null);
+
+  const openAuth=m=>{setAuthMode(m);setShowAuth(true);};
+  const handleLogin=u=>{
+    setUser(u);
+    setShowAuth(false);
+    if(u.role==="admin"){setPage("admin");}
+    else{setToast(`Benvenuto, ${u.name.split(" ")[0]}!`);}
+  };
+  const handleLogout=()=>{setUser(null);setPage("home");setToast("Sessione terminata.");};
+  const onToast=msg=>setToast(msg);
+
+  return (
+    <>
+      <G/>
+      <GlobalSEO page={page} jobs={JOBS} scholarships={SCHOLARSHIPS}/>
+      <Navbar page={page} setPage={setPage} user={user} onLoginOpen={openAuth} onLogout={handleLogout}/>
+      {showAuth&&<AuthModal onClose={()=>setShowAuth(false)} onLogin={handleLogin} mode={authMode}/>}
+      {toast&&<Toast msg={toast} onDone={()=>setToast(null)}/>}
+
+      <main>
+        {page==="home"&&<><Hero setPage={setPage}/><StatsStrip/><HowItWorks setPage={setPage}/></>}
+        {page==="jobs"&&<JobsPage setPage={setPage}/>}
+        {page.startsWith("job_")&&<JobDetailPage jobId={page.replace("job_","")} setPage={setPage} onLoginOpen={openAuth}/>}
+        {page==="scholarships"&&<ScholarshipsPage onLoginOpen={openAuth}/>}
+        {page==="map"&&<MapPage/>}
+        {page==="privacy"&&<PrivacyPage/>}
+        {page==="guida"&&<GuidaPage/>}
+        {page==="about"&&<AboutPage onLoginOpen={openAuth}/>}
+        {page==="profile"&&(user
+          ?<ProfilePage user={user} onToast={onToast}/>
+          :<div style={{paddingTop:120,textAlign:"center",color:"var(--muted)",fontSize:16}}>Devi <button onClick={()=>openAuth("login")} style={{background:"none",border:"none",color:"var(--gold)",cursor:"pointer",fontWeight:700,fontSize:16}}>accedere</button> per vedere il profilo.</div>
+        )}
+        {page==="admin"&&(user?.role==="admin"
+          ?<AdminPage user={user} onToast={onToast}/>
+          :<div style={{paddingTop:120,textAlign:"center",color:"var(--coral)",fontSize:16,fontWeight:600}}>⛔ Accesso negato. Devi essere amministratore.</div>
+        )}
+      </main>
+
+      <Footer setPage={setPage}/>
+    </>
+  );
+}
