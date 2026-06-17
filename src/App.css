@@ -789,8 +789,7 @@ function SEOPanel({ jobs, scholarships }) {
 }
 
 /* ══════════════════════════════════════════════
-   SOLCO.IT — Sito Web Completo v3.0
-   Admin: admin@solco.it / Solco2026!
+   SOLCO.IT — Sito Web Completo v4.0
 ══════════════════════════════════════════════ */
 
 const G = () => (
@@ -912,7 +911,7 @@ function Toast({msg,onDone}) {
 function Navbar({page,setPage,user,onLoginOpen,onLogout}) {
   const [sc,setSc]=useState(false);
   useEffect(()=>{const fn=()=>setSc(window.scrollY>50);window.addEventListener("scroll",fn);return()=>window.removeEventListener("scroll",fn);},[]);
-  const links=[["home","Home"],["about","Chi siamo"],["jobs","Lavoro"],["scholarships","Borse e Tirocini"],["map","Mappa"],["privacy","Privacy"],["guida","Guida & P.IVA"]];
+  const links=[["home","Home"],["about","Chi siamo"],["jobs","Lavoro"],["scholarships","Borse e Tirocini"],["map","Mappa"],["privacy","Privacy"],["guida","Guida & P.IVA"],["contact","Contatti"]];
   return (
     <nav style={{position:"fixed",top:0,left:0,right:0,zIndex:200,height:64,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 28px",
       background:sc?"rgba(249,247,244,.97)":"transparent",backdropFilter:sc?"blur(20px)":"none",
@@ -1644,7 +1643,80 @@ function AboutPage({onLoginOpen}) {
   );
 }
 
-function AuthModal({onClose,onLogin,mode:init="login"}) {
+function ContactPage({onToast}) {
+  const [f,setF]=useState({name:"",email:"",subject:"Informazioni generali",message:""});
+  const [sent,setSent]=useState(false);
+  const upd=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+
+  const submit=()=>{
+    if(!f.name||!f.email||!f.message){onToast("Compila tutti i campi obbligatori.");return;}
+    if(!f.email.includes("@")){onToast("Inserisci un'email valida.");return;}
+    // In produzione: POST a /api/contact che invia a info@solcolavoro.it
+    setSent(true);
+  };
+
+  return (
+    <div style={{paddingTop:64,minHeight:"100vh",background:"var(--cream)"}}>
+      <div style={{background:"linear-gradient(135deg,var(--ink) 0%,var(--ink2) 50%,#0d2040 100%)",padding:"56px 40px 44px",position:"relative",overflow:"hidden"}}>
+        <div style={{position:"absolute",top:-80,right:-80,width:350,height:350,borderRadius:"50%",border:"70px solid rgba(232,184,75,.06)"}}/>
+        <div style={{maxWidth:900,margin:"0 auto",position:"relative",zIndex:1}}>
+          <span className="sec-label" style={{color:"rgba(255,255,255,.4)"}}>SCRIVICI</span>
+          <h1 className="pf" style={{fontSize:44,fontWeight:900,color:"#fff",marginBottom:10}}>Contatti</h1>
+          <p style={{color:"rgba(255,255,255,.45)",fontSize:15,maxWidth:560,lineHeight:1.75}}>Hai domande, vuoi segnalare un problema o proporre una partnership? Scrivici, ti risponderemo entro 48 ore.</p>
+        </div>
+      </div>
+      <hr className="hr-gold"/>
+      <div style={{maxWidth:900,margin:"0 auto",padding:"40px 40px 70px",display:"grid",gridTemplateColumns:"1fr 320px",gap:28}}>
+
+        {/* Form */}
+        <div className="card" style={{padding:30}}>
+          {sent?(
+            <div style={{textAlign:"center",padding:"30px 0"}}>
+              <div style={{fontSize:46,marginBottom:14}}>✅</div>
+              <div className="pf" style={{fontSize:20,fontWeight:700,color:"var(--ink)",marginBottom:8}}>Messaggio inviato!</div>
+              <p style={{fontSize:14,color:"var(--muted)",lineHeight:1.7}}>Grazie {f.name.split(" ")[0]}, ti risponderemo all'indirizzo {f.email} entro 48 ore.</p>
+              <button onClick={()=>{setSent(false);setF({name:"",email:"",subject:"Informazioni generali",message:""});}} style={{marginTop:16,background:"none",border:"none",color:"var(--gold)",cursor:"pointer",fontWeight:700,fontSize:13}}>Invia un altro messaggio</button>
+            </div>
+          ):(
+            <>
+              <div className="pf" style={{fontSize:18,fontWeight:700,color:"var(--ink)",marginBottom:20}}>Scrivici un messaggio</div>
+              <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+                  <input className="inp" placeholder="Nome e cognome *" value={f.name} onChange={upd("name")}/>
+                  <input className="inp" type="email" placeholder="Email *" value={f.email} onChange={upd("email")}/>
+                </div>
+                <select className="inp" value={f.subject} onChange={upd("subject")}>
+                  {["Informazioni generali","Segnalazione problema tecnico","Proposta partnership","Pubblicare un'offerta","Richiesta cancellazione dati","Altro"].map(s=><option key={s}>{s}</option>)}
+                </select>
+                <textarea className="inp" placeholder="Il tuo messaggio *" rows={6} value={f.message} onChange={upd("message")} style={{resize:"vertical"}}/>
+                <button className="btn btn-gold" onClick={submit} style={{padding:13,justifyContent:"center",fontSize:14}}>Invia messaggio →</button>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Info contatti */}
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <div className="card" style={{padding:22}}>
+            <div style={{fontSize:11,fontWeight:800,color:"var(--gold)",letterSpacing:2,marginBottom:12}}>EMAIL</div>
+            <a href="mailto:info@solcolavoro.it" style={{fontSize:14,color:"var(--ink)",fontWeight:600,textDecoration:"none"}}>📧 info@solcolavoro.it</a>
+            <p style={{fontSize:12,color:"var(--muted)",marginTop:8,lineHeight:1.6}}>Risposta entro 48 ore lavorative</p>
+          </div>
+          <div className="card" style={{padding:22}}>
+            <div style={{fontSize:11,fontWeight:800,color:"var(--gold)",letterSpacing:2,marginBottom:12}}>PRIVACY & DATI</div>
+            <a href="mailto:privacy@solcolavoro.it" style={{fontSize:14,color:"var(--ink)",fontWeight:600,textDecoration:"none"}}>🔒 privacy@solcolavoro.it</a>
+            <p style={{fontSize:12,color:"var(--muted)",marginTop:8,lineHeight:1.6}}>Per richieste GDPR e protezione dati</p>
+          </div>
+          <div className="card" style={{padding:22}}>
+            <div style={{fontSize:11,fontWeight:800,color:"var(--gold)",letterSpacing:2,marginBottom:12}}>PER LE ORGANIZZAZIONI</div>
+            <a href="mailto:partner@solcolavoro.it" style={{fontSize:14,color:"var(--ink)",fontWeight:600,textDecoration:"none"}}>🤝 partner@solcolavoro.it</a>
+            <p style={{fontSize:12,color:"var(--muted)",marginTop:8,lineHeight:1.6}}>Per pubblicare offerte e partnership</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
   const [mode,setMode]=useState(init);
   const [f,setF]=useState({name:"",email:"",password:"",confirm:"",city:"",availability:"qualsiasi",privacy:false,marketing:false});
   const [err,setErr]=useState("");
@@ -1709,7 +1781,7 @@ function AuthModal({onClose,onLogin,mode:init="login"}) {
             </label>
           </>}
         </div>
-        {mode==="login"&&<div style={{marginTop:10,padding:"8px 12px",background:"var(--cream)",borderRadius:8,fontSize:12,color:"var(--muted)"}}>🔐 Admin: <code style={{color:"var(--gold)"}}>admin@solco.it</code> / <code style={{color:"var(--gold)"}}>Solco2026!</code></div>}
+
         <button className="btn btn-gold" onClick={submit} style={{width:"100%",justifyContent:"center",marginTop:18,padding:14,fontSize:15,opacity:loading?.7:1}}>
           {loading?"Creazione account...":mode==="login"?"Accedi →":"Crea il tuo account →"}
         </button>
@@ -1847,12 +1919,8 @@ function AdminPage({user,onToast}) {
               <div style={{color:"rgba(255,255,255,.3)",fontSize:12,marginTop:2}}>{user.email}</div>
             </div>
           </div>
-          <div style={{background:"rgba(232,184,75,.07)",border:"1px solid rgba(232,184,75,.18)",borderRadius:10,padding:"10px 16px",fontSize:12}}>
-            <span style={{color:"rgba(255,255,255,.4)"}}>Credenziali: </span>
-            <code style={{color:"var(--gold)"}}>admin@solco.it</code>
-            <span style={{color:"rgba(255,255,255,.25)",margin:"0 6px"}}>/</span>
-            <code style={{color:"var(--gold)"}}>Solco2026!</code>
-            <span style={{color:"rgba(255,255,255,.25)",marginLeft:8,fontSize:11}}>⚠ Cambia in produzione</span>
+          <div style={{background:"rgba(255,107,107,.07)",border:"1px solid rgba(255,107,107,.18)",borderRadius:10,padding:"10px 16px",fontSize:12,color:"var(--coral)",fontWeight:600}}>
+            ⚠ Vai su Impostazioni per cambiare la password admin
           </div>
         </div>
       </div>
@@ -2059,7 +2127,7 @@ function Footer({setPage}) {
           </div>
           {[
             ["Piattaforma",[["Offerte di lavoro","jobs"],["Borse & Tirocini","scholarships"],["Mappa Italia","map"],["Chi siamo","about"]]],
-            ["Per Organizzazioni",[["Pubblica offerte","about"],["Piani employer","about"],["API access","about"],["Contatti","about"]]],
+            ["Per Organizzazioni",[["Pubblica offerte","about"],["Piani employer","about"],["API access","about"],["Contatti","contact"]]],
             ["Risorse",[["Guida & P.IVA","guida"],["Come pubblicare","guida"],["Blog","about"],["Newsletter","about"]]],
             ["Legale",[["Privacy & GDPR","privacy"],["Cookie Policy","privacy"],["Termini di servizio","privacy"],["Garante Privacy","privacy"]]],
           ].map(([t,links])=>(
@@ -2121,6 +2189,7 @@ export default function SolcoWebsite() {
         {page==="privacy"&&<PrivacyPage/>}
         {page==="guida"&&<GuidaPage/>}
         {page==="about"&&<AboutPage onLoginOpen={openAuth}/>}
+        {page==="contact"&&<ContactPage onToast={onToast}/>}
         {page==="profile"&&(user
           ?<ProfilePage user={user} onToast={onToast}/>
           :<div style={{paddingTop:120,textAlign:"center",color:"var(--muted)",fontSize:16}}>Devi <button onClick={()=>openAuth("login")} style={{background:"none",border:"none",color:"var(--gold)",cursor:"pointer",fontWeight:700,fontSize:16}}>accedere</button> per vedere il profilo.</div>
