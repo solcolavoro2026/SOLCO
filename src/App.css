@@ -911,7 +911,7 @@ function Toast({msg,onDone}) {
 function Navbar({page,setPage,user,onLoginOpen,onLogout}) {
   const [sc,setSc]=useState(false);
   useEffect(()=>{const fn=()=>setSc(window.scrollY>50);window.addEventListener("scroll",fn);return()=>window.removeEventListener("scroll",fn);},[]);
-  const links=[["home","Home"],["about","Chi siamo"],["jobs","Lavoro"],["scholarships","Borse e Tirocini"],["map","Mappa"],["privacy","Privacy"],["guida","Guida & P.IVA"],["contact","Contatti"]];
+  const links=[["home","Home"],["about","Chi siamo"],["jobs","Lavoro"],["scholarships","Borse e Tirocini"],["map","Mappa"],["contact","Contatti"]];
   return (
     <nav style={{position:"fixed",top:0,left:0,right:0,zIndex:200,height:64,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 28px",
       background:sc?"rgba(249,247,244,.97)":"transparent",backdropFilter:sc?"blur(20px)":"none",
